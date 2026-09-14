@@ -152,6 +152,14 @@ LIVE_FILLER_HOLD_S = 5.0
 VAD_MIN = 0.0015       # most sensitive it may become (near-silent room)
 VAD_MAX = 0.0100       # least sensitive it may become — the anti-deafening clamp
 VAD_K = 3.0            # threshold = noise_floor * K
+# Mic sensitivity presets a client may ask for per connection. All three still MEASURE the room
+# (adaptive floor, webrtcvad on speech spectra); a preset only moves how strict the gate is.
+# "balanced" = the server defaults above. high: hears whispers, may catch breath. low: noisy rooms.
+SENSITIVITY = {
+    "high": {"vad_mode": 0, "sustain_s": 0.45, "k": 2.0},
+    "balanced": {"vad_mode": 1, "sustain_s": 0.60, "k": 3.0},
+    "low": {"vad_mode": 3, "sustain_s": 0.80, "k": 4.5},
+}
 VAD_COLD = 0.0025      # used until the window has enough history to estimate
 VAD_FIXED = 0.0        # >0 forces a fixed RMS threshold (escape hatch: --vad-rms)
 VAD_MODE = 1           # webrtcvad aggressiveness 0..3; LOW = more sensitive to quiet speech
@@ -262,8 +270,14 @@ class BurstSession:
     Each burst is transcribed exactly once and APPENDED — never re-transcribed,
     so nothing a consumer has already committed can be revised."""
 
-    def __init__(self, max_s: float, gap_s: float):
+    def __init__(self, max_s: float, gap_s: float, sensitivity: str | None = None):
         self.max_s, self.gap_s = max_s, gap_s
+        # Per-connection mic sensitivity (?sensitivity=high|balanced|low). None = the server's
+        # own defaults, so a client that does not send it behaves exactly as before.
+        s = SENSITIVITY.get(sensitivity or "")
+        self.vad_mode = s["vad_mode"] if s else VAD_MODE
+        self.sustain_s = s["sustain_s"] if s else SUSTAIN_S
+        self.k = s["k"] if s else VAD_K
         self.buf = np.zeros(0, dtype=np.float32)
         self.cumulative = ""
         self._continues = False   # did the previous burst end mid-sentence?
@@ -271,7 +285,7 @@ class BurstSession:
         self._floor = deque(maxlen=300)   # ~9s of 30ms frame RMS -> RMS-fallback floor
         # aggressiveness 0..3; LOW = more sensitive. Sensitivity is cheap here because
         # Parakeet returns "" on silence, so a false positive costs one wasted burst.
-        self._vad = webrtcvad.Vad(VAD_MODE) if _HAVE_WEBRTCVAD else None
+        self._vad = webrtcvad.Vad(self.vad_mode) if _HAVE_WEBRTCVAD else None
 
     def thresh(self) -> float:
         """Adaptive speech threshold: the noise floor, scaled, clamped. Follows the
@@ -281,7 +295,7 @@ class BurstSession:
         if len(self._floor) < 20:
             return VAD_COLD
         floor = float(np.percentile(np.asarray(self._floor), 10))
-        return float(np.clip(floor * VAD_K, VAD_MIN, VAD_MAX))
+        return float(np.clip(floor * self.k, VAD_MIN, VAD_MAX))
 
     def _frames(self):
         """Per-30ms-frame speech decisions (bool array) — webrtcvad if available,
@@ -351,7 +365,7 @@ class BurstSession:
             speech = self._speech_s(rms)
             dur = len(self.buf) / SR
             trail = self._trailing_silence_s(rms)
-            if self._sustained_s(rms) < SUSTAIN_S:
+            if self._sustained_s(rms) < self.sustain_s:
                 # Nothing has sustained long enough to be speech yet. If a whole
                 # window went by without a sustained run, whatever is in here is a
                 # TRANSIENT — breath, throat-clear, cough, a door — so drop it
@@ -491,8 +505,8 @@ class LiveSession(BurstSession):
         that was correct all along but was attached to the wrong architecture in July.
     """
 
-    def __init__(self, gap_s: float, ceiling_s: float = LIVE_CEILING_S):
-        super().__init__(ceiling_s, gap_s)
+    def __init__(self, gap_s: float, ceiling_s: float = LIVE_CEILING_S, sensitivity: str | None = None):
+        super().__init__(ceiling_s, gap_s, sensitivity)
         self.stable = ""        # committed text for THIS utterance; append-only
         self._stable_words = []  # the SAME text as words — the append-only unit
         self._prev_rest = []    # last pass's UNCOMMITTED words, for the two-in-a-row test
@@ -530,7 +544,7 @@ class LiveSession(BurstSession):
             return []
         # Nothing has sustained long enough to be speech: drop transients (breath, a
         # door) rather than let them reach the model and come back as invented words.
-        if self._sustained_s(flags) < SUSTAIN_S:
+        if self._sustained_s(flags) < self.sustain_s:
             # Nothing sustained yet: keep only the last ~1s, so a quiet ONSET survives into
             # the utterance it begins, without silence piling up for 22s and slowing the
             # first transcribe of the next phrase.
@@ -597,7 +611,7 @@ class LiveSession(BurstSession):
         gap cut does, so the model never hears a long noise tail after the last word.
         """
         flags = self._frames()
-        if len(flags) == 0 or self._sustained_s(flags) < SUSTAIN_S:
+        if len(flags) == 0 or self._sustained_s(flags) < self.sustain_s:
             self.buf = np.zeros(0, dtype=np.float32)
             return None
         trail = self._trailing_silence_s(flags)
@@ -822,8 +836,9 @@ async def stream(ws: WebSocket):
     # burst-protocol client already speaks; adding a second consumer's needs must never
     # change the first's wire format. WaveFlow asks for live, that client does not,
     # neither can break the other.
+    sens = ws.query_params.get("sensitivity")
     if ws.query_params.get("mode") == "live":
-        sess = LiveSession(app.state.burst_gap_s)
+        sess = LiveSession(app.state.burst_gap_s, sensitivity=sens)
         try:
             while True:
                 msg = await ws.receive()
@@ -831,7 +846,7 @@ async def stream(ws: WebSocket):
                     break
                 if msg.get("text") is not None:
                     if msg["text"] == "reset":
-                        sess = LiveSession(app.state.burst_gap_s)
+                        sess = LiveSession(app.state.burst_gap_s, sensitivity=sens)
                         await ws.send_text(json.dumps(
                             {"stable": "", "tail": "", "reset": True, "final": False}))
                     elif msg["text"] == "flush":
@@ -858,7 +873,7 @@ async def stream(ws: WebSocket):
             pass
         return
 
-    sess = BurstSession(app.state.burst_max_s, app.state.burst_gap_s)
+    sess = BurstSession(app.state.burst_max_s, app.state.burst_gap_s, sens)
     try:
         while True:
             msg = await ws.receive()
@@ -868,7 +883,7 @@ async def stream(ws: WebSocket):
                 if msg["text"] == "reset":
                     # drop in-flight audio + cumulative; ack so the consumer can
                     # gate stale partials (another client relies on this handshake)
-                    sess = BurstSession(app.state.burst_max_s, app.state.burst_gap_s)
+                    sess = BurstSession(app.state.burst_max_s, app.state.burst_gap_s, sens)
                     await ws.send_text(json.dumps({"text": "", "reset": True}))
                 elif msg["text"] == "flush":
                     t0 = time.perf_counter()

@@ -1324,6 +1324,7 @@ class WaveFlow(QWidget):
             wsurl = self.url.replace("http", "ws", 1) + f"/v1/audio/stream?latency={lat}"
             if self._live_mode:
                 wsurl += "&mode=live"
+            wsurl += f"&sensitivity={self.cfg.get('mic_sensitivity', 'balanced')}"
             ws = websocket.create_connection(
                 wsurl, timeout=4, header=[f"{k}: {v}" for k, v in auth_headers(self.token).items()])
             # create_connection's timeout becomes the socket's READ timeout too, and

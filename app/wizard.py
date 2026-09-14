@@ -3,53 +3,69 @@
 Steps: Welcome · Where it runs · Configure · Test connection · Hotkey & mic.
 Configure and Test show a live preview on the right: the exact commands / .env / config that will
 be written or run, and the raw request log. Nothing runs until the primary button is pressed.
-All rules (engine matrix, threads, validation, plan, checks) live in setup_logic.py.
+All rules (engine matrix, threads, validation, plan, checks) live in setup_logic.py; the
+hand-drawn widgets live in wizard_ui.py.
 """
 from __future__ import annotations
 
 import html
+import json
 import subprocess
-import textwrap
 import threading
+import time
 from pathlib import Path
 
 from PySide6.QtCore import QObject, Qt, QTimer, Signal
-from PySide6.QtGui import QFont, QGuiApplication, QKeySequence
-from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QDialog, QFrame, QGridLayout,
-                               QHBoxLayout, QKeySequenceEdit, QLabel, QLineEdit, QMessageBox,
-                               QProgressBar, QPushButton, QSpinBox, QStackedWidget, QTextEdit,
-                               QVBoxLayout, QWidget)
+from PySide6.QtGui import QGuiApplication, QKeySequence
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QFrame, QGridLayout, QHBoxLayout,
+                               QKeySequenceEdit, QLabel, QLineEdit, QMessageBox, QProgressBar,
+                               QPushButton, QSpinBox, QStackedWidget, QTextEdit, QVBoxLayout, QWidget)
 
 import setup_logic as S
+from wizard_ui import (BAD, BLUSH, MINT, SKY, VIO, WARN, Card, CheckRow, Segmented, StepItem, TitleBar,
+                       round_window_corners)
 
 STEPS = ["Welcome", "Where it runs", "Configure", "Test connection", "Hotkey & mic"]
-MINT, SKY, VIO, BLUSH, BAD, WARN = "#37e0c8", "#57c8ff", "#8a7bff", "#ff7bc8", "#ff6b7f", "#ffc46b"
 
 QSS = f"""
-QDialog{{background:#12151c;}}
-QWidget{{color:#e9ecf3;font-family:'Segoe UI Variable Text','Segoe UI';font-size:13px;}}
-#rail{{background:#0d1016;border-right:1px solid rgba(255,255,255,0.08);}}
+QDialog#wizard{{background:#12151c;border:1px solid rgba(255,255,255,0.08);}}
+QWidget{{color:#e9ecf3;font-family:'Segoe UI Variable Text','Segoe UI';font-size:13px;background:transparent;}}
+#titlebar{{background:#12151c;border-bottom:1px solid rgba(255,255,255,0.08);}}
+QPushButton#winbtn{{background:transparent;border:none;color:#5d6477;font-size:13px;border-radius:0;padding:0;}}
+QPushButton#winbtn:hover{{background:rgba(255,255,255,0.06);color:#e9ecf3;}}
+#rail{{background:rgba(0,0,0,0.18);border-right:1px solid rgba(255,255,255,0.08);}}
 #preview{{background:#07090d;border-left:1px solid rgba(255,255,255,0.08);}}
-QLabel#h2{{font-size:18px;font-weight:600;}}
-QLabel#lead,QLabel#hint{{color:#8d94a6;}} QLabel#hint{{font-size:11.5px;}}
-QLabel#lbl{{color:#5d6477;font-size:10.5px;letter-spacing:1px;}}
-QLabel#err{{color:{BAD};}} QLabel#warn{{color:{WARN};}}
-QPushButton{{background:#222632;border:1px solid rgba(255,255,255,0.16);border-radius:8px;padding:7px 14px;}}
-QPushButton:hover{{border-color:rgba(255,255,255,0.3);}}
+QLabel#h2{{font-family:'Segoe UI Variable Display','Segoe UI';font-size:19px;font-weight:600;}}
+QLabel#lead{{color:#8d94a6;font-size:13px;}}
+QLabel#hint{{color:#5d6477;font-size:11.5px;}}
+QLabel#lbl{{color:#8d94a6;font-size:11.5px;}}
+QLabel#plbl{{color:#5d6477;font-size:10.5px;letter-spacing:1px;}}
+QLabel#err{{color:{BAD};font-size:12px;}} QLabel#warn{{color:{WARN};font-size:12px;}}
+QLabel#detect{{color:#8d94a6;font-size:12px;}}
+QFrame#divider{{background:rgba(255,255,255,0.08);max-height:1px;min-height:1px;}}
+QPushButton{{background:rgba(34,38,50,0.9);border:1px solid rgba(255,255,255,0.18);border-radius:8px;padding:8px 16px;}}
+QPushButton:hover{{border-color:rgba(255,255,255,0.32);}}
 QPushButton:disabled{{color:#5d6477;border-color:rgba(255,255,255,0.06);}}
-QPushButton#pri{{background:#3aa9e6;border:none;color:#04121c;font-weight:600;}}
+QPushButton#pri{{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #5fd0ff,stop:1 #3aa9e6);border:none;
+  color:#04121c;font-weight:600;padding:9px 20px;}}
+QPushButton#pri:hover{{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #78d9ff,stop:1 #4cb4ee);}}
 QPushButton#pri:disabled{{background:#23445a;color:#6d8797;}}
 QPushButton#ghost{{background:transparent;border:none;color:#8d94a6;}}
-QPushButton#step{{background:transparent;border:none;text-align:left;padding:9px 10px;color:#8d94a6;}}
-QPushButton#step:checked{{background:rgba(255,255,255,0.05);color:#e9ecf3;}}
-QPushButton#card{{text-align:left;padding:12px 14px;border:1px solid rgba(255,255,255,0.09);background:rgba(255,255,255,0.02);border-radius:10px;}}
-QPushButton#card:checked{{border:1.5px solid {SKY};}}
-QPushButton#card:disabled{{color:#5d6477;}}
-QLineEdit,QSpinBox,QComboBox,QKeySequenceEdit{{background:#0c0f15;border:1px solid rgba(255,255,255,0.1);border-radius:7px;padding:6px 8px;}}
-QTextEdit{{background:#07090d;border:none;font-family:'Cascadia Code',Consolas;font-size:12px;}}
-QCheckBox{{color:#c9cfdc;}}
-QProgressBar{{background:rgba(255,255,255,0.06);border:none;border-radius:4px;height:8px;}}
-QProgressBar::chunk{{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 {MINT},stop:0.5 {SKY},stop:1 {VIO});border-radius:4px;}}
+QPushButton#ghost:hover{{color:#e9ecf3;}}
+QPushButton#pill{{background:transparent;border:1px solid rgba(255,255,255,0.09);border-radius:11px;color:#8d94a6;
+  padding:3px 10px;font-size:11.5px;}}
+QPushButton#pill:hover,QPushButton#pill:checked{{color:#e9ecf3;border-color:rgba(255,255,255,0.25);}}
+#segbox{{border:1px solid rgba(255,255,255,0.09);border-radius:9px;background:rgba(0,0,0,0.2);}}
+QPushButton#seg{{background:transparent;border:none;border-radius:6px;color:#8d94a6;padding:6px 14px;font-size:12.5px;}}
+QPushButton#seg:checked{{background:rgba(87,200,255,0.16);color:#e9ecf3;}}
+QLineEdit,QSpinBox,QComboBox,QKeySequenceEdit{{background:#0c0f15;border:1px solid rgba(255,255,255,0.1);
+  border-radius:7px;padding:7px 10px;selection-background-color:#3aa9e6;}}
+QLineEdit:focus,QSpinBox:focus,QComboBox:focus{{border-color:rgba(87,200,255,0.6);}}
+QComboBox QAbstractItemView{{background:#12151c;border:1px solid rgba(255,255,255,0.12);selection-background-color:#223344;}}
+QTextEdit{{background:#07090d;border:none;font-family:'Cascadia Code',Consolas;font-size:12px;color:#cfd6e4;}}
+QCheckBox{{color:#c9cfdc;spacing:6px;}}
+QProgressBar{{background:rgba(255,255,255,0.06);border:none;border-radius:4px;max-height:8px;}}
+QProgressBar::chunk{{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 {MINT},stop:0.45 {SKY},stop:0.8 {VIO},stop:1 {BLUSH});border-radius:4px;}}
 """
 
 
@@ -61,23 +77,10 @@ def _lbl(text, name=None, wrap=True):
     return l
 
 
-def _seg(labels, on_change, parent):
-    box = QWidget(parent)
-    lay = QHBoxLayout(box)
-    lay.setContentsMargins(0, 0, 0, 0)
-    lay.setSpacing(4)
-    grp = QButtonGroup(box)
-    grp.setExclusive(True)
-    for i, t in enumerate(labels):
-        b = QPushButton(t)
-        b.setCheckable(True)
-        b.setObjectName("card")
-        b.setMinimumWidth(len(t) * 8 + 44)      # stylesheet font/padding is not applied yet here
-        grp.addButton(b, i)
-        lay.addWidget(b)
-    lay.addStretch(1)
-    grp.idClicked.connect(on_change)
-    return box, grp
+def _divider():
+    f = QFrame()
+    f.setObjectName("divider")
+    return f
 
 
 class _Bus(QObject):
@@ -89,9 +92,11 @@ class _Bus(QObject):
 class SetupWizard(QDialog):
     def __init__(self, cfg: dict, engine, devices_fn=None, parent=None):
         super().__init__(parent)
+        self.setObjectName("wizard")
         self.setWindowTitle("WaveFlow setup")
+        self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
         self.setStyleSheet(QSS)
-        self.resize(1020, 600)
+        self.resize(1040, 660)
         self.cfg = dict(cfg)
         self.engine = engine                  # LocalEngine owned by the app
         self.devices_fn = devices_fn
@@ -106,6 +111,7 @@ class SetupWizard(QDialog):
         if self.c.auto_threads:
             self.c.threads = self.hw.perf_cores
         self.result_cfg: dict | None = None
+        self.plan = S.build_plan(self.c)
         self.bus = _Bus()
         self.bus.progress.connect(self._on_progress)
         self.bus.done.connect(self._on_action_done)
@@ -113,35 +119,44 @@ class SetupWizard(QDialog):
         self._busy = False
         self._mic = None
 
-        root = QHBoxLayout(self)
-        root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(0)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        outer.addWidget(TitleBar(self, "WaveFlow setup"))
+        body = QHBoxLayout()
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(0)
+        outer.addLayout(body, 1)
+
         rail = QFrame()
         rail.setObjectName("rail")
-        rail.setFixedWidth(200)
+        rail.setFixedWidth(212)
         rl = QVBoxLayout(rail)
-        rl.setContentsMargins(10, 18, 10, 14)
-        self.step_btns = []
+        rl.setContentsMargins(10, 16, 10, 16)
+        rl.setSpacing(2)
+        self.steps = []
         for i, s in enumerate(STEPS):
-            b = QPushButton(f"  {i + 1}   {s.replace('&', '&&')}")
-            b.setObjectName("step")
-            b.setCheckable(True)
-            b.clicked.connect(lambda _, i=i: self.go(i))
-            rl.addWidget(b)
-            self.step_btns.append(b)
+            it = StepItem(i + 1, s)
+            it.clicked.connect(lambda _=False, i=i: self.go(i))
+            rl.addWidget(it)
+            self.steps.append(it)
         rl.addStretch(1)
         self.rail_foot = _lbl("", "hint")
         rl.addWidget(self.rail_foot)
-        root.addWidget(rail)
+        body.addWidget(rail)
 
         self.stack = QStackedWidget()
-        root.addWidget(self.stack, 1)
+        body.addWidget(self.stack, 1)
         self.pages = [self._page_welcome(), self._page_where(), self._page_configure(),
                       self._page_test(), self._page_hotkey()]
         for p in self.pages:
             self.stack.addWidget(p)
         self.step = 0
         self.go(0)
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        round_window_corners(self)
 
     # ------------------------------------------------------------ shell
     def _shell(self, with_preview=False):
@@ -151,38 +166,57 @@ class SetupWizard(QDialog):
         h.setSpacing(0)
         main = QWidget()
         v = QVBoxLayout(main)
-        v.setContentsMargins(26, 22, 26, 18)
+        v.setContentsMargins(28, 24, 28, 20)
         v.setSpacing(10)
         h.addWidget(main, 58)
         prev = None
         if with_preview:
             pw = QFrame()
             pw.setObjectName("preview")
-            pw.setMinimumWidth(340)
+            pw.setMinimumWidth(360)
             pv = QVBoxLayout(pw)
-            pv.setContentsMargins(16, 16, 16, 16)
+            pv.setContentsMargins(18, 18, 18, 18)
             prev = QTextEdit()
             prev.setReadOnly(True)
             prev.setLineWrapMode(QTextEdit.WidgetWidth)
             pv.addWidget(prev)
-            h.addWidget(pw, 44)
+            h.addWidget(pw, 42)
         return page, v, prev
 
-    def _foot(self, v, back=True, primary="Continue", on_primary=None):
+    def _heading(self, v, title, lead):
+        t = _lbl(title, "h2")
+        v.addWidget(t)
+        l = _lbl(lead, "lead")
+        v.addWidget(l)
+        v.addSpacing(6)
+        return t, l
+
+    def _foot(self, v, back=True, primary="Continue", on_primary=None, extra=()):
         row = QHBoxLayout()
-        b = QPushButton("Back" if back else "")
+        b = QPushButton("Back")
         b.setObjectName("ghost")
         b.clicked.connect(lambda: self.go(self.step - 1))
-        b.setEnabled(back)
+        b.setVisible(back)
         row.addWidget(b)
         row.addStretch(1)
+        for w in extra:
+            row.addWidget(w)
         p = QPushButton(primary)
         p.setObjectName("pri")
+        p.setCursor(Qt.PointingHandCursor)
         p.clicked.connect(on_primary or (lambda: self.go(self.step + 1)))
         row.addWidget(p)
         v.addStretch(1)
         v.addLayout(row)
         return p
+
+    def _detect_line(self):
+        def b(x):
+            return f"<b style='color:#e9ecf3'>{x}</b>"
+        return (f"This PC: {b(f'{self.hw.perf_cores} performance cores')} &nbsp;&nbsp; "
+                f"GPU: {b('DirectX 12' if self.hw.directml else 'DirectML not installed')} &nbsp;&nbsp; "
+                f"Docker: {b('found' if self.hw.docker else 'not found')} &nbsp;&nbsp; "
+                f"NVIDIA: {b('found' if self.hw.nvidia else 'not found')}")
 
     def go(self, i):
         if self._busy or not 0 <= i < len(STEPS):
@@ -190,11 +224,10 @@ class SetupWizard(QDialog):
         self._stop_mic()
         self.step = i
         self.stack.setCurrentIndex(i)
-        for k, b in enumerate(self.step_btns):
-            b.setChecked(k == i)
-            b.setText(f"  {'✓' if k < i else k + 1}   {STEPS[k].replace('&', '&&')}")
-        self.rail_foot.setText(f"{S.OPTION_NAMES[self.c.option]}\n"
-                               f"{'🔒 token' if self.c.option != 'local' else 'local only'}")
+        for k, it in enumerate(self.steps):
+            it.state = "done" if k < i else "current" if k == i else "future"
+            it.update()
+        self._update_rail_foot()
         if i == 2:
             self._refresh_configure()
         if i == 3:
@@ -202,43 +235,56 @@ class SetupWizard(QDialog):
         if i == 4:
             self._start_mic()
 
+    def _update_rail_foot(self):
+        self.rail_foot.setText(f"{S.OPTION_NAMES[self.c.option]}\n"
+                               f"{'🔒 token' if self.c.option != 'local' else 'local only'}")
+
     # ------------------------------------------------------------ 0 welcome
     def _page_welcome(self):
         page, v, _ = self._shell()
-        v.addWidget(_lbl("Private dictation, on your hardware", "h2"))
-        v.addWidget(_lbl("WaveFlow types what you say into any app. Speech recognition runs on a "
-                         "machine you choose — this PC, a server at home, or your own VPS. No cloud account.",
-                         "lead"))
-        v.addWidget(_lbl(f"This PC: {self.hw.perf_cores} performance cores of {self.hw.all_cores} · "
-                         f"GPU (DirectML): {'ready' if self.hw.directml else 'not installed'} · "
-                         f"Docker: {'found' if self.hw.docker else 'not found'} · "
-                         f"NVIDIA: {'found' if self.hw.nvidia else 'not found'}", "hint"))
-        v.addWidget(_lbl("Change anything later in ⚙ → Setup.", "hint"))
+        v.addSpacing(18)
+        mark = QLabel()
+        mark.setFixedSize(64, 12)
+        mark.setStyleSheet(f"border-radius:6px;background:qlineargradient(x1:0,y1:0,x2:1,y2:0,"
+                           f"stop:0 {MINT},stop:0.45 {SKY},stop:0.8 {VIO},stop:1 {BLUSH});")
+        v.addWidget(mark)
+        v.addSpacing(10)
+        self._heading(v, "Private dictation, on your hardware",
+                      "WaveFlow types what you say into any app. Speech recognition runs on a machine you "
+                      "choose — this PC, a server at home, or your own VPS. No cloud account.")
+        v.addWidget(_divider())
+        d = _lbl(f"Takes <b style='color:#e9ecf3'>about 2 minutes</b> &nbsp;&nbsp; Needs "
+                 f"<b style='color:#e9ecf3'>~700 MB</b> for the model &nbsp;&nbsp; Change anything later in "
+                 f"<b style='color:#e9ecf3'>⚙ → Setup</b>", "detect")
+        d.setTextFormat(Qt.RichText)
+        v.addWidget(d)
         self._foot(v, back=False, primary="Get started")
         return page
 
     # ------------------------------------------------------------ 1 where
     def _page_where(self):
         page, v, _ = self._shell()
-        v.addWidget(_lbl("Where should speech recognition run?", "h2"))
-        v.addWidget(_lbl("Audio only goes to the machine you pick.", "lead"))
+        self._heading(v, "Where should speech recognition run?", "Audio only goes to the machine you pick.")
         grid = QGridLayout()
-        grid.setSpacing(10)
-        self.opt_grp = QButtonGroup(page)
-        lines = {"local": "Runs quietly with the app. No Docker.\nAny 4+ core CPU or a DirectX 12 GPU.",
-                 "docker": "Engine in a container on this PC.\nDocker Desktop.",
-                 "onsite": "A box at home: LAN, Tailscale or VPN.\nDocker or Python venv.",
-                 "vps": "Your own server on the internet.\nDocker, a domain, HTTPS."}
+        grid.setSpacing(8)
+        lines = {"local": "Runs quietly with the app. No Docker. Any 4+ core CPU or a DirectX 12 GPU.",
+                 "docker": "Engine in a container on this PC. Docker Desktop.",
+                 "onsite": "A box at home: LAN, Tailscale or VPN. Docker or Python venv.",
+                 "vps": "Your own server on the internet. Docker, a domain, HTTPS."}
+        self.opt_cards = []
         for n, k in enumerate(S.OPTIONS):
-            b = QPushButton(f"{S.OPTION_NAMES[k]}{'   · Recommended' if k == 'local' else ''}\n{lines[k]}")
-            b.setObjectName("card")
-            b.setCheckable(True)
-            b.setMinimumHeight(78)
-            b.setChecked(k == self.c.option)
-            self.opt_grp.addButton(b, n)
-            grid.addWidget(b, n // 2, n % 2)
-        self.opt_grp.idClicked.connect(self._set_option)
+            c = Card(S.OPTION_NAMES[k], lines[k], badge="Recommended" if k == "local" else "")
+            c.setAutoExclusive(True)
+            c.setChecked(k == self.c.option)
+            c.clicked.connect(lambda _=False, n=n: self._set_option(n))
+            grid.addWidget(c, n // 2, n % 2)
+            self.opt_cards.append(c)
         v.addLayout(grid)
+        v.addSpacing(6)
+        v.addWidget(_divider())
+        d = _lbl(self._detect_line(), "detect")
+        d.setTextFormat(Qt.RichText)
+        v.addWidget(d)
         self._foot(v)
         return page
 
@@ -246,62 +292,66 @@ class SetupWizard(QDialog):
         self.c.option = S.OPTIONS[n]
         if self.c.option == "vps" and self.c.address.startswith("http://"):
             self.c.address = ""
-        self.rail_foot.setText(S.OPTION_NAMES[self.c.option])
+        self._update_rail_foot()
 
     # ------------------------------------------------------------ 2 configure
     def _page_configure(self):
         page, v, prev = self._shell(with_preview=True)
         self.cfg_preview = prev
-        self.cfg_v = v
-        self.cfg_title = _lbl("", "h2")
-        v.addWidget(self.cfg_title)
-        v.addWidget(_lbl("The right side updates as you change things. Nothing runs until you press the button.",
-                         "lead"))
+        self.cfg_title, _ = self._heading(v, "", "The right side updates as you change things. "
+                                                 "Nothing runs until you press the button.")
 
-        # address (onsite / vps)
         self.addr_box = QWidget()
         al = QVBoxLayout(self.addr_box)
-        al.setContentsMargins(0, 0, 0, 0)
-        self.addr_label = _lbl("", "hint")
+        al.setContentsMargins(0, 0, 0, 4)
+        al.setSpacing(5)
+        self.addr_label = _lbl("", "lbl")
         self.addr = QLineEdit(self.c.address)
         self.addr.textChanged.connect(lambda t: (setattr(self.c, "address", t), self._refresh_configure(False)))
-        al.addWidget(self.addr_label)
-        al.addWidget(self.addr)
+        self.addr_hint = _lbl("", "hint")
+        for w in (self.addr_label, self.addr, self.addr_hint):
+            al.addWidget(w)
         v.addWidget(self.addr_box)
 
-        # onsite method / docker reach
-        self.method_box, self.method_grp = _seg(["Docker", "Python venv"], self._set_method, page)
-        self.reach_box, self.reach_grp = _seg(["This PC only", "My network"], self._set_reach, page)
-        v.addWidget(self.method_box)
-        v.addWidget(self.reach_box)
+        self.method_row = QWidget()
+        mr = QHBoxLayout(self.method_row)
+        mr.setContentsMargins(0, 0, 0, 0)
+        mr.addWidget(_lbl("Install method", "lbl", wrap=False))
+        self.method = Segmented(["Docker", "Python venv"])
+        self.method.changed.connect(self._set_method)
+        mr.addWidget(self.method)
+        mr.addStretch(1)
+        v.addWidget(self.method_row)
 
-        # engines
-        v.addWidget(_lbl("ENGINE", "lbl"))
-        self.eng_row = QVBoxLayout()       # full-width rows: three side by side clipped their text
-        self.eng_row.setSpacing(6)
-        self.eng_grp = QButtonGroup(page)
-        self.eng_btns = []
-        for i, e in enumerate(S.ENGINES):
-            b = QPushButton()
-            b.setObjectName("card")
-            b.setCheckable(True)
-            b.setMinimumHeight(52)
-            self.eng_grp.addButton(b, i)
-            self.eng_row.addWidget(b, 1)
-            self.eng_btns.append(b)
-        self.eng_grp.idClicked.connect(self._set_engine)
-        v.addLayout(self.eng_row)
-        self.gpu_install = QPushButton("Install GPU support (onnxruntime-directml)")
+        self.reach_row = QWidget()
+        rr = QHBoxLayout(self.reach_row)
+        rr.setContentsMargins(0, 0, 0, 0)
+        rr.addWidget(_lbl("Reachable from", "lbl", wrap=False))
+        self.reach = Segmented(["This PC only", "My network"])
+        self.reach.changed.connect(self._set_reach)
+        rr.addWidget(self.reach)
+        rr.addStretch(1)
+        v.addWidget(self.reach_row)
+
+        v.addWidget(_lbl("Engine", "lbl"))
+        self.eng_cards = []
+        for i, _e in enumerate(S.ENGINES):
+            c = Card()
+            c.setAutoExclusive(True)
+            c.clicked.connect(lambda _=False, i=i: self._set_engine(i))
+            v.addWidget(c)
+            self.eng_cards.append(c)
+        self.gpu_install = QPushButton("Install GPU support  ·  onnxruntime-directml")
         self.gpu_install.clicked.connect(self._install_directml)
         v.addWidget(self.gpu_install)
 
-        # threads
-        v.addWidget(_lbl("CPU THREADS (ONNX · CPU)", "lbl"))
+        v.addSpacing(4)
+        v.addWidget(_lbl("CPU threads  ·  used by ONNX · CPU", "lbl"))
         tr = QHBoxLayout()
         self.thr = QSpinBox()
         self.thr.setRange(S.THREADS_MIN, S.THREADS_MAX)
         self.thr.setValue(S.clamp_threads(self.c.threads))
-        self.thr.setFixedWidth(90)
+        self.thr.setFixedWidth(84)
         self.thr.valueChanged.connect(lambda n: (setattr(self.c, "threads", n), self._refresh_configure(False)))
         self.thr_auto = QCheckBox("Auto")
         self.thr_auto.setChecked(self.c.auto_threads)
@@ -313,24 +363,27 @@ class SetupWizard(QDialog):
         tr.addWidget(self.thr_hint, 1)
         v.addLayout(tr)
 
-        # token
         self.tok_box = QWidget()
         tl = QVBoxLayout(self.tok_box)
-        tl.setContentsMargins(0, 0, 0, 0)
-        tl.addWidget(_lbl("TOKEN", "lbl"))
+        tl.setContentsMargins(0, 4, 0, 0)
+        tl.setSpacing(5)
+        tl.addWidget(_lbl("Token", "lbl"))
         trow = QHBoxLayout()
+        trow.setSpacing(6)
         self.tok = QLineEdit(self.c.token)
         self.tok.setEchoMode(QLineEdit.Password)
         self.tok.textChanged.connect(lambda t: (setattr(self.c, "token", t.strip()), self._refresh_configure(False)))
-        show = QPushButton("Show")
-        show.setCheckable(True)
-        show.toggled.connect(lambda on: self.tok.setEchoMode(QLineEdit.Normal if on else QLineEdit.Password))
-        cp = QPushButton("Copy")
-        cp.clicked.connect(lambda: QGuiApplication.clipboard().setText(self.c.token))
-        new = QPushButton("New")
-        new.clicked.connect(lambda: self.tok.setText(S.new_token()))
-        for w in (self.tok, show, cp, new):
-            trow.addWidget(w, 1 if w is self.tok else 0)
+        trow.addWidget(self.tok, 1)
+        for text, fn, checkable in (("Show", None, True), ("Copy", lambda: QGuiApplication.clipboard().setText(self.c.token), False),
+                                    ("New", lambda: self.tok.setText(S.new_token()), False)):
+            b = QPushButton(text)
+            b.setObjectName("pill")
+            b.setCheckable(checkable)
+            if checkable:
+                b.toggled.connect(lambda on: self.tok.setEchoMode(QLineEdit.Normal if on else QLineEdit.Password))
+            else:
+                b.clicked.connect(fn)
+            trow.addWidget(b)
         tl.addLayout(trow)
         tl.addWidget(_lbl("Made for you. Use the same token on the server.", "hint"))
         v.addWidget(self.tok_box)
@@ -338,9 +391,8 @@ class SetupWizard(QDialog):
         self.msg = _lbl("", "err")
         self.warn = _lbl("", "warn")
         self.progress = _lbl("", "hint")
-        v.addWidget(self.msg)
-        v.addWidget(self.warn)
-        v.addWidget(self.progress)
+        for w in (self.msg, self.warn, self.progress):
+            v.addWidget(w)
         self.cfg_primary = self._foot(v, primary="Continue", on_primary=self._configure_primary)
         return page
 
@@ -390,28 +442,32 @@ class SetupWizard(QDialog):
         c = self.c
         self.cfg_title.setText(f"Configure — {S.OPTION_NAMES[c.option]}")
         self.addr_box.setVisible(c.option in ("onsite", "vps"))
-        self.addr_label.setText("Server address — LAN name, IP or Tailscale name (setup never logs in to it)"
-                                if c.option == "onsite" else "Domain — HTTPS only; the DNS name must point at the VPS")
-        self.addr.setPlaceholderText("http://gpu-box.local:8756" if c.option == "onsite" else "https://stt.example.com")
-        self.method_box.setVisible(c.option == "onsite")
-        self.method_grp.button(0 if c.method == "docker" else 1).setChecked(True)
-        self.reach_box.setVisible(c.option == "docker")
-        self.reach_grp.button(1 if c.lan else 0).setChecked(True)
+        if c.option == "onsite":
+            self.addr_label.setText("Server address")
+            self.addr_hint.setText("LAN name, IP, or Tailscale name. Setup never logs in to it.")
+            self.addr.setPlaceholderText("gpu-box.local:8756")
+        else:
+            self.addr_label.setText("Domain")
+            self.addr_hint.setText("HTTPS only. The DNS name must point at the VPS first.")
+            self.addr.setPlaceholderText("https://stt.example.com")
+        self.method_row.setVisible(c.option == "onsite")
+        self.method.set(0 if c.method == "docker" else 1)
+        self.reach_row.setVisible(c.option == "docker")
+        self.reach.set(1 if c.lan else 0)
         self.tok_box.setVisible(c.option != "local")
         choices = S.engines_for(c.option, c.method, self.hw)
         if rebuild:
             valid = [e.engine for e in choices if e.available]
             if c.engine not in valid and valid:
                 c.engine = valid[0]
-        for b, e in zip(self.eng_btns, choices):
-            # QPushButton never wraps, and one long line stretched the whole window past 2000px.
-            b.setText(f"{e.label}   ·   {e.detail}" + (f"\n{textwrap.fill(e.reason, 64)}" if e.reason else ""))
-            b.setEnabled(e.available)
-            b.setChecked(e.engine == c.engine)
+        for card, e in zip(self.eng_cards, choices):
+            card.set_content(e.label, e.detail, note=e.reason)
+            card.setEnabled(e.available)
+            card.setChecked(e.engine == c.engine)
         need_dml = c.option == "local" and c.engine == "onnx-gpu" and not self.hw.directml
         self.gpu_install.setVisible(need_dml)
         self.thr.setEnabled(not c.auto_threads)
-        self.thr_hint.setText(f"Auto = {self.hw.perf_cores} performance cores on this PC."
+        self.thr_hint.setText(f"Auto = {self.hw.perf_cores} performance cores on this PC. More is slower on hybrid CPUs."
                               if c.option in ("local", "docker") else
                               "Set to the server's physical performance cores.")
         errs = S.validate(c)
@@ -426,22 +482,23 @@ class SetupWizard(QDialog):
     def _preview_html(self, plan, errs):
         def mask(s):
             return s.replace(self.c.token, "••••••••••••") if self.c.token else s
+
+        def label(t):
+            return f"<p style='color:#5d6477;font-size:10px;letter-spacing:1px;margin:0 0 6px 0'>{t}</p>"
         if plan is None:
-            return f"<p style='color:{WARN}'>{html.escape(' '.join(errs))}</p>"
-        out = [f"<p style='color:#5d6477;font-size:10px'>{plan.where.upper()}</p><pre style='white-space:pre-wrap'>"]
+            return label("NOT READY") + f"<p style='color:{WARN}'>{html.escape(' '.join(errs))}</p>"
+        out = [label(plan.where.upper()), "<pre style='white-space:pre-wrap;margin:0 0 16px 0'>"]
         if plan.env_text:
             out.append(f"<span style='color:#5d6477'># {html.escape(plan.env_path)}</span>\n")
             for line in plan.env_text.splitlines():
                 k, _, val = line.partition("=")
-                col = BLUSH if "TOKEN" in k else MINT
+                col = BLUSH if "TOKEN" in k else MINT if k in ("HOST_BIND", "WAVEFLOW_DOMAIN") else SKY
                 out.append(f"{k}=<span style='color:{col}'>{html.escape(mask(val))}</span>\n")
             out.append("\n")
         for cmd in plan.commands:
             out.append(html.escape(mask(cmd)) + "\n")
-        out.append("</pre><p style='color:#5d6477;font-size:10px'>APP CONFIG</p><pre style='white-space:pre-wrap'>")
-        import json
-        shown = json.dumps(plan.config, indent=2)
-        out.append(html.escape(mask(shown)) + "</pre>")
+        out.append("</pre>" + label("APP CONFIG") + "<pre style='white-space:pre-wrap;margin:0'>")
+        out.append(html.escape(mask(json.dumps(plan.config, indent=2))) + "</pre>")
         return "".join(out)
 
     def _configure_primary(self):
@@ -493,7 +550,6 @@ class SetupWizard(QDialog):
             self.bus.done.emit(False, "Docker returned an error — see the last line above.")
             return
         from local_engine import _health
-        import time
         for _ in range(600):
             if _health(plan.url):
                 self.bus.done.emit(True, "Container ready.")
@@ -515,49 +571,34 @@ class SetupWizard(QDialog):
     def _page_test(self):
         page, v, prev = self._shell(with_preview=True)
         self.test_preview = prev
-        v.addWidget(_lbl("Test connection", "h2"))
-        self.test_lead = _lbl("", "lead")
-        v.addWidget(self.test_lead)
+        _, self.test_lead = self._heading(v, "Test connection", "")
         self.check_rows = []
         for _ in range(4):
-            row = QHBoxLayout()
-            icon, name, det = QLabel("·"), QLabel(""), _lbl("", "hint", wrap=False)
-            icon.setFixedWidth(22)
-            row.addWidget(icon)
-            row.addWidget(name, 1)
-            row.addWidget(det)
-            v.addLayout(row)
-            self.check_rows.append((icon, name, det))
+            r = CheckRow()
+            v.addWidget(r)
+            self.check_rows.append(r)
+        v.addSpacing(6)
         self.verdict = _lbl("", "lead")
+        self.verdict.setStyleSheet("padding:10px 12px;border-radius:10px;")
         v.addWidget(self.verdict)
-        row = QHBoxLayout()
-        back = QPushButton("Back")
-        back.setObjectName("ghost")
-        back.clicked.connect(lambda: self.go(2))
         again = QPushButton("Test again")
         again.clicked.connect(self._run_checks)
         self.skip = QPushButton("Save without testing")
         self.skip.setObjectName("ghost")
         self.skip.clicked.connect(lambda: self.go(4))
-        self.test_next = QPushButton("Continue")
-        self.test_next.setObjectName("pri")
-        self.test_next.clicked.connect(lambda: self.go(4))
-        row.addWidget(back)
-        row.addStretch(1)
-        for w in (self.skip, again, self.test_next):
-            row.addWidget(w)
-        v.addStretch(1)
-        v.addLayout(row)
+        self.test_next = self._foot(v, primary="Continue", on_primary=lambda: self.go(4), extra=(self.skip, again))
         return page
 
     def _run_checks(self):
         plan = S.build_plan(self.c)
         self.plan = plan
-        self.test_lead.setText(f"{S.OPTION_NAMES[self.c.option]} · {plan.url}")
-        for icon, name, det in self.check_rows:
-            icon.setText("…")
-            det.setText("")
+        self.test_lead.setText(f"{S.OPTION_NAMES[self.c.option]}  ·  {plan.url}"
+                               + ("  ·  DNS and HTTPS certificate checked first" if self.c.option == "vps" else ""))
+        names = ["Server answers", "Engine ready", "Token accepted", "Sample clip transcribed"]
+        for r, n in zip(self.check_rows, names):
+            r.set(None, n, "…")
         self.verdict.setText("Testing…")
+        self.verdict.setStyleSheet("padding:10px 12px;border-radius:10px;color:#8d94a6;")
         self.test_next.setEnabled(False)
         self.skip.setVisible(self.c.option in ("onsite", "vps"))
         remote = self.c.option != "local"
@@ -566,46 +607,45 @@ class SetupWizard(QDialog):
 
     def _on_checks(self, checks, verdict):
         allok = all(ch.ok for ch in checks)
-        for (icon, name, det), ch in zip(self.check_rows, checks):
-            icon.setText({True: "✓", False: "✕", None: "·"}[ch.ok])
-            icon.setStyleSheet(f"color:{MINT if ch.ok else BAD if ch.ok is False else '#5d6477'};font-weight:700")
-            name.setText(ch.name)
-            det.setText(ch.detail)
+        for r, ch in zip(self.check_rows, checks):
+            r.set(ch.ok, ch.name, ch.detail)
         self.verdict.setText(verdict)
-        self.verdict.setStyleSheet(f"color:{MINT if allok else BAD}")
+        col, bg, bd = ((MINT, "rgba(55,224,200,0.06)", "rgba(55,224,200,0.25)") if allok else
+                       (BAD, "rgba(255,107,127,0.06)", "rgba(255,107,127,0.3)"))
+        self.verdict.setStyleSheet(f"padding:10px 12px;border-radius:10px;color:{col};background:{bg};border:1px solid {bd};")
         self.test_next.setEnabled(allok)
         tok = "(none)" if not self.plan.token else "••••••••"
-        log = [f"GET  {self.plan.url}/health", f"     {checks[0].detail} {checks[1].detail}",
-               "", "POST /v1/audio/transcriptions", f"     Authorization: Bearer {tok}",
-               f"     {checks[2].detail}  {checks[3].detail}"]
-        self.test_preview.setHtml("<p style='color:#5d6477;font-size:10px'>REQUEST LOG</p><pre style='white-space:pre-wrap'>"
-                                  + html.escape("\n".join(log)) + "</pre>")
+        c3 = f"<span style='color:{MINT if checks[2].ok else BAD}'>{html.escape(checks[2].detail)}</span>"
+        log = (f"<span style='color:#5d6477'>GET</span>  {html.escape(self.plan.url)}/health\n"
+               f"     {html.escape(checks[0].detail)}  {html.escape(checks[1].detail)}\n\n"
+               f"<span style='color:#5d6477'>POST</span> /v1/audio/transcriptions\n"
+               f"     Authorization: Bearer <span style='color:{BLUSH}'>{tok}</span>\n"
+               f"     {c3}  {html.escape(checks[3].detail)}")
+        self.test_preview.setHtml("<p style='color:#5d6477;font-size:10px;letter-spacing:1px'>REQUEST LOG</p>"
+                                  f"<pre style='white-space:pre-wrap'>{log}</pre>")
 
     # ------------------------------------------------------------ 4 hotkey & mic
     def _page_hotkey(self):
         page, v, _ = self._shell()
-        v.addWidget(_lbl("Hotkey & microphone", "h2"))
-        v.addWidget(_lbl("Last step.", "lead"))
-        v.addWidget(_lbl("SHOW / DICTATE", "lbl"))
+        self._heading(v, "Hotkey & microphone", "Last step.")
+        v.addWidget(_lbl("Show / dictate", "lbl"))
         self.hk = QKeySequenceEdit(QKeySequence(_to_qt(self.cfg.get("hotkey_show", "ctrl+alt+w"))))
-        self.hk.setMaximumWidth(260)
+        self.hk.setMaximumWidth(280)
         v.addWidget(self.hk)
-        v.addWidget(_lbl("MICROPHONE", "lbl"))
+        v.addSpacing(6)
+        v.addWidget(_lbl("Microphone", "lbl"))
         self.mic_box = QComboBox()
-        self.mic_box.setMaximumWidth(420)
-        self._devs = []
+        self.mic_box.setMaximumWidth(440)
         try:
-            devs, default = self.devices_fn() if self.devices_fn else ([], None)
+            devs, _default = self.devices_fn() if self.devices_fn else ([], None)
         except Exception:
-            devs, default = [], None
-        self._devs = devs
+            devs = []
         self.mic_box.addItem("System default", None)
-        for idx, name in devs:
+        for _idx, name in devs:
             self.mic_box.addItem(name, name)
         cur = self.cfg.get("device_name")
         if cur:
-            i = self.mic_box.findData(cur)
-            self.mic_box.setCurrentIndex(max(0, i))
+            self.mic_box.setCurrentIndex(max(0, self.mic_box.findData(cur)))
         if not devs:
             v.addWidget(_lbl("No microphone found. Plug one in, then reopen ⚙ → Setup.", "warn"))
         self.mic_box.currentIndexChanged.connect(lambda _: (self._stop_mic(), self._start_mic()))
@@ -613,14 +653,18 @@ class SetupWizard(QDialog):
         self.meter = QProgressBar()
         self.meter.setRange(0, 100)
         self.meter.setTextVisible(False)
-        self.meter.setMaximumWidth(420)
+        self.meter.setMaximumWidth(440)
         v.addWidget(self.meter)
         self.mic_err = _lbl("Speak to test.", "hint")
         v.addWidget(self.mic_err)
-        v.addWidget(_lbl("LOOK", "lbl"))
-        self.skin_box, self.skin_grp = _seg(["Aurora", "Halo"], lambda i: None, page)
-        self.skin_grp.button(1 if self.cfg.get("skin") == "halo" else 0).setChecked(True)
-        v.addWidget(self.skin_box)
+        v.addSpacing(6)
+        v.addWidget(_lbl("Look", "lbl"))
+        self.skin = Segmented(["Aurora", "Halo"])
+        self.skin.set(1 if self.cfg.get("skin") == "halo" else 0)
+        sr = QHBoxLayout()
+        sr.addWidget(self.skin)
+        sr.addStretch(1)
+        v.addLayout(sr)
         self._foot(v, primary="Finish", on_primary=self._finish)
         self._mt = QTimer(self)
         self._mt.timeout.connect(self._tick_meter)
@@ -638,7 +682,6 @@ class SetupWizard(QDialog):
             self._peak = 0.02
             self._mt.start(50)
             self.mic_err.setText("Speak to test.")
-            self.mic_err.setObjectName("hint")
         except Exception as e:
             self._mic = None
             self.mic_err.setText(f"Could not open this microphone: {e}")
@@ -668,7 +711,7 @@ class SetupWizard(QDialog):
         seq = self.hk.keySequence().toString()
         out["hotkey_show"] = seq.replace("Meta", "windows").lower().replace(" ", "") or "ctrl+alt+w"
         out["device_name"] = self.mic_box.currentData()
-        out["skin"] = "halo" if self.skin_grp.checkedId() == 1 else "aurora"
+        out["skin"] = "halo" if self.skin.index() == 1 else "aurora"
         out["setup_done"] = True
         self.result_cfg = out
         self.accept()

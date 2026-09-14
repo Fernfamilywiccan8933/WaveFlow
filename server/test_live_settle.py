@@ -331,6 +331,22 @@ s.settle("Um so the plan")
 check("past the hold, a real 'um' settles as before", s.settle("Um so the plan is"),
       ("Um so the plan", "is"))
 
+# --- 14. mic sensitivity presets (per connection) ----------------------------------------------
+check("no preset = server defaults",
+      (lambda s: (s.vad_mode, s.sustain_s, s.k))(P.LiveSession(0.35)), (P.VAD_MODE, P.SUSTAIN_S, P.VAD_K))
+check("balanced preset == server defaults (clients that send it change nothing)",
+      (lambda s: (s.vad_mode, s.sustain_s, s.k))(P.LiveSession(0.35, sensitivity="balanced")),
+      (P.VAD_MODE, P.SUSTAIN_S, P.VAD_K))
+check("unknown preset falls back to defaults", P.LiveSession(0.35, sensitivity="loud").sustain_s, P.SUSTAIN_S)
+hi, lo = P.LiveSession(0.35, sensitivity="high"), P.LiveSession(0.35, sensitivity="low")
+check("high is more permissive than low", (hi.vad_mode < lo.vad_mode, hi.sustain_s < lo.sustain_s, hi.k < lo.k),
+      (True, True, True))
+for name, want in (("high", True), ("balanced", False), ("low", False)):   # a 0.51s run of speech
+    s = P.LiveSession(0.35, sensitivity=name)
+    s.buf = np.ones(40 * 480, dtype=np.float32) * 0.01
+    s._frames = lambda: np.asarray([False] * 10 + [True] * 17 + [False] * 13, dtype=bool)
+    check(f"0.5s speech with {name}", s.flush() is not None, want)
+
 if FAILS:
     print("LIVE_SETTLE_FAIL\n" + "\n".join(FAILS))
     raise SystemExit(1)
