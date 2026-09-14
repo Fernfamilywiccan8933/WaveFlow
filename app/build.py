@@ -33,6 +33,11 @@ def main() -> int:
         "--hidden-import", "audio",
         "--hidden-import", "websocket",
         "--hidden-import", "stt",
+        # imported lazily (Setup / Settings / Uninstall), so PyInstaller cannot see them
+        *[a for m in ("icons", "settings", "wizard", "wizard_ui", "panels", "setup_logic", "uninstall",
+                      "local_engine") for a in ("--hidden-import", m)],
+        "--icon", str(HERE / "assets" / "waveflow.ico"),
+        "--add-data", f"{HERE / 'assets'};assets",
         str(HERE / "waveflow.py"),
     ]
     print("running PyInstaller...")

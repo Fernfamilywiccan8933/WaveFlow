@@ -15,17 +15,18 @@ import threading
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QObject, Qt, QTimer, Signal
+from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtGui import QGuiApplication, QKeySequence
-from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QFrame, QGridLayout, QHBoxLayout,
-                               QKeySequenceEdit, QLabel, QLineEdit, QMessageBox, QProgressBar,
+from PySide6.QtWidgets import (QCheckBox, QDialog, QFrame, QGridLayout, QHBoxLayout,
+                               QKeySequenceEdit, QLabel, QLineEdit, QMessageBox,
                                QPushButton, QSpinBox, QStackedWidget, QTextEdit, QVBoxLayout, QWidget)
 
 import setup_logic as S
+from panels import MicPanel, SkinPicker
 from wizard_ui import (BAD, BLUSH, MINT, SKY, VIO, WARN, Card, CheckRow, Segmented, StepItem, TitleBar,
                        round_window_corners)
 
-STEPS = ["Welcome", "Where it runs", "Configure", "Test connection", "Hotkey & mic"]
+STEPS = ["Welcome", "Where it runs", "Configure", "Test connection", "Hotkey, mic & look"]
 
 QSS = f"""
 QDialog#wizard{{background:#12151c;border:1px solid rgba(255,255,255,0.08);}}
@@ -65,6 +66,17 @@ QComboBox QAbstractItemView{{background:#12151c;border:1px solid rgba(255,255,25
 QTextEdit{{background:#07090d;border:none;font-family:'Cascadia Code',Consolas;font-size:12px;color:#cfd6e4;}}
 QCheckBox{{color:#c9cfdc;spacing:6px;}}
 QProgressBar{{background:rgba(255,255,255,0.06);border:none;border-radius:4px;max-height:8px;}}
+QPushButton#danger{{background:rgba(255,107,127,0.1);border:1px solid rgba(255,107,127,0.45);color:#ffb3bd;
+  font-weight:600;padding:9px 20px;}}
+QPushButton#danger:hover{{background:rgba(255,107,127,0.18);}}
+QPushButton#danger:disabled{{color:#5d6477;border-color:rgba(255,255,255,0.06);background:transparent;}}
+QLabel#warnbox{{background:rgba(255,196,107,0.06);border:1px solid rgba(255,196,107,0.3);border-radius:10px;
+  padding:10px 12px;color:#c9cfdc;font-size:12px;}}
+#urow{{border:1px solid rgba(255,255,255,0.08);border-radius:10px;}}
+QCheckBox::indicator{{width:16px;height:16px;border:1px solid rgba(255,255,255,0.28);border-radius:4px;background:#0c0f15;}}
+QCheckBox::indicator:checked{{background:#57c8ff;border-color:#57c8ff;}}
+QCheckBox::indicator:disabled{{border-color:rgba(255,255,255,0.08);background:transparent;}}
+QTextEdit#previewtext{{background:#07090d;border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:8px;font-family:Consolas;font-size:12px;}}
 QProgressBar::chunk{{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 {MINT},stop:0.45 {SKY},stop:0.8 {VIO},stop:1 {BLUSH});border-radius:4px;}}
 """
 
@@ -117,7 +129,6 @@ class SetupWizard(QDialog):
         self.bus.done.connect(self._on_action_done)
         self.bus.checks.connect(self._on_checks)
         self._busy = False
-        self._mic = None
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -624,84 +635,42 @@ class SetupWizard(QDialog):
         self.test_preview.setHtml("<p style='color:#5d6477;font-size:10px;letter-spacing:1px'>REQUEST LOG</p>"
                                   f"<pre style='white-space:pre-wrap'>{log}</pre>")
 
-    # ------------------------------------------------------------ 4 hotkey & mic
+    # ------------------------------------------------------------ 4 hotkey, mic & look
     def _page_hotkey(self):
         page, v, _ = self._shell()
-        self._heading(v, "Hotkey & microphone", "Last step.")
-        v.addWidget(_lbl("Show / dictate", "lbl"))
+        self._heading(v, "Hotkey, microphone & look",
+                      "Last step. Speak to see the level; the line marks where speech starts.")
+        two = QHBoxLayout()
+        two.setSpacing(24)
+        left = QVBoxLayout()
+        left.setSpacing(6)
+        left.addWidget(_lbl("Show / dictate", "lbl"))
         self.hk = QKeySequenceEdit(QKeySequence(_to_qt(self.cfg.get("hotkey_show", "ctrl+alt+w"))))
-        self.hk.setMaximumWidth(280)
-        v.addWidget(self.hk)
-        v.addSpacing(6)
-        v.addWidget(_lbl("Microphone", "lbl"))
-        self.mic_box = QComboBox()
-        self.mic_box.setMaximumWidth(440)
-        try:
-            devs, _default = self.devices_fn() if self.devices_fn else ([], None)
-        except Exception:
-            devs = []
-        self.mic_box.addItem("System default", None)
-        for _idx, name in devs:
-            self.mic_box.addItem(name, name)
-        cur = self.cfg.get("device_name")
-        if cur:
-            self.mic_box.setCurrentIndex(max(0, self.mic_box.findData(cur)))
-        if not devs:
-            v.addWidget(_lbl("No microphone found. Plug one in, then reopen ⚙ → Setup.", "warn"))
-        self.mic_box.currentIndexChanged.connect(lambda _: (self._stop_mic(), self._start_mic()))
-        v.addWidget(self.mic_box)
-        self.meter = QProgressBar()
-        self.meter.setRange(0, 100)
-        self.meter.setTextVisible(False)
-        self.meter.setMaximumWidth(440)
-        v.addWidget(self.meter)
-        self.mic_err = _lbl("Speak to test.", "hint")
-        v.addWidget(self.mic_err)
-        v.addSpacing(6)
-        v.addWidget(_lbl("Look", "lbl"))
-        self.skin = Segmented(["Aurora", "Halo"])
-        self.skin.set(1 if self.cfg.get("skin") == "halo" else 0)
-        sr = QHBoxLayout()
-        sr.addWidget(self.skin)
-        sr.addStretch(1)
-        v.addLayout(sr)
+        self.hk.setMaximumWidth(300)
+        left.addWidget(self.hk)
+        left.addSpacing(8)
+        self.mic = MicPanel(self.cfg, self.devices_fn)
+        left.addWidget(self.mic)
+        left.addStretch(1)
+        right = QVBoxLayout()
+        right.setSpacing(6)
+        right.addWidget(_lbl("Look", "lbl"))
+        self.skin = SkinPicker(self.cfg.get("skin", "aurora"))
+        right.addWidget(self.skin)
+        right.addStretch(1)
+        two.addLayout(left, 1)
+        two.addLayout(right, 1)
+        v.addLayout(two)
         self._foot(v, primary="Finish", on_primary=self._finish)
-        self._mt = QTimer(self)
-        self._mt.timeout.connect(self._tick_meter)
         return page
 
     def _start_mic(self):
-        if self.step != 4 or self._mic is not None:
-            return
-        try:
-            from audio import MicStream, resolve_device_name
-            name = self.mic_box.currentData()
-            dev = resolve_device_name(name)[0] if name else None
-            self._mic = MicStream(device=dev)
-            self._mic.start()
-            self._peak = 0.02
-            self._mt.start(50)
-            self.mic_err.setText("Speak to test.")
-        except Exception as e:
-            self._mic = None
-            self.mic_err.setText(f"Could not open this microphone: {e}")
-
-    def _tick_meter(self):
-        if self._mic is None:
-            return
-        r = float(self._mic.rms())
-        self._peak = max(self._peak * 0.995, r, 0.02)
-        self.meter.setValue(int(min(1.0, r / self._peak) * 100))
+        if self.step == 4:
+            self.mic.start()
 
     def _stop_mic(self):
-        if getattr(self, "_mt", None):
-            self._mt.stop()
-        if self._mic is not None:
-            try:
-                self._mic.stop()
-            except Exception:
-                pass
-            self._mic = None
+        if getattr(self, "mic", None) is not None:
+            self.mic.stop()
 
     def _finish(self):
         self._stop_mic()
@@ -710,8 +679,9 @@ class SetupWizard(QDialog):
         out.update(plan.config)
         seq = self.hk.keySequence().toString()
         out["hotkey_show"] = seq.replace("Meta", "windows").lower().replace(" ", "") or "ctrl+alt+w"
-        out["device_name"] = self.mic_box.currentData()
-        out["skin"] = "halo" if self.skin.index() == 1 else "aurora"
+        out["device_name"] = self.mic.device_name()
+        out["mic_sensitivity"] = self.mic.sensitivity()
+        out["skin"] = self.skin.value()
         out["setup_done"] = True
         self.result_cfg = out
         self.accept()

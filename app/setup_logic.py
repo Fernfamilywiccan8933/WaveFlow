@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import ctypes
 import ipaddress
+import math
 import os
 import secrets
 import shutil
@@ -280,6 +281,130 @@ def build_plan(c: Choices) -> Plan:
                 env_path="docker/.env", env_text=text,
                 commands=[f"docker compose -f docker/compose.vps.yml{gpu} up -d --build"],
                 where="Run on your VPS")
+
+
+def choices_from_config(cfg: dict) -> Choices:
+    """The Choices a saved config came from, so Settings can rebuild the same plan."""
+    e = cfg.get("engine") or {}
+    mode = e.get("mode") if e.get("mode") in OPTIONS else "local"
+    return Choices(option=mode, engine=e.get("engine", "onnx-cpu") if e.get("engine") in ENGINES else "onnx-cpu",
+                   method=e.get("method", "docker"), threads=clamp_threads(e.get("threads", 4)),
+                   auto_threads=e.get("auto_threads", True),
+                   address=cfg.get("url", "") if mode in ("onsite", "vps") else "", token=cfg.get("token", ""))
+
+
+def replace_env_value(text: str, key: str, value: str) -> str:
+    """Set KEY=value in .env text, keeping every other line as it was."""
+    lines, done = [], False
+    for line in text.splitlines():
+        if line.split("=", 1)[0].strip() == key:
+            lines.append(f"{key}={value}")
+            done = True
+        else:
+            lines.append(line)
+    if not done:
+        lines.append(f"{key}={value}")
+    return "\n".join(lines) + "\n"
+
+
+@dataclass
+class Rotation:
+    kind: str                 # "none" (local: no token) | "here" (the app does it) | "server" (you do it)
+    env_path: str = ""
+    env_text: str = ""
+    commands: list[str] = field(default_factory=list)
+
+
+def rotation_plan(cfg: dict, new: str) -> Rotation:
+    """What rotating the token means for this install. The old token stops working once the server
+    restarts with the new one; the app saves the new token at the same moment."""
+    c = choices_from_config(cfg)
+    if c.option == "local":
+        return Rotation("none")
+    c.token = new
+    plan = build_plan(c)
+    if c.option == "docker":
+        env = Path(plan.env_path)
+        old = env.read_text(encoding="utf-8") if env.exists() else plan.env_text
+        return Rotation("here", plan.env_path, replace_env_value(old, "WAVEFLOW_TOKEN", new),
+                        [plan.commands[0].replace(" --build", "")])
+    if c.option == "onsite" and c.method == "venv":
+        return Rotation("server", commands=[f"export WAVEFLOW_TOKEN={new}",
+                                            "# then restart python server/parakeet_server.py"])
+    up = plan.commands[0].replace(" --build", "")
+    return Rotation("server", commands=[f"sed -i 's/^WAVEFLOW_TOKEN=.*/WAVEFLOW_TOKEN={new}/' docker/.env", up])
+
+
+# ---------------------------------------------------------------- microphone sensitivity
+SENSITIVITIES = ["high", "balanced", "low"]
+# The server's speech gate: a frame counts as speech when its level passes k x the rolling noise
+# floor (server/parakeet_server.py SENSITIVITY). The meter draws that same line.
+SENSITIVITY_K = {"high": 2.0, "balanced": 3.0, "low": 4.5}
+METER_SPAN = 12.0             # the meter's right edge = 12 x the noise floor
+
+
+class LevelTracker:
+    """Rolling noise floor from the live mic level, so the meter shows level RELATIVE to the room —
+    the same thing the server gates on — and not a raw number that means nothing across mics."""
+
+    def __init__(self):
+        self.floor = 0.0
+
+    def push(self, rms: float) -> float:
+        rms = max(float(rms), 1e-5)
+        if self.floor <= 0:
+            self.floor = rms
+        elif rms < self.floor:
+            self.floor += (rms - self.floor) * 0.3        # fall fast to a quieter room
+        else:
+            self.floor += (rms - self.floor) * 0.004      # rise slowly: speech must not lift it
+        return rms / self.floor
+
+
+def meter_pos(ratio: float) -> float:
+    """0..1 position on a log scale (1x floor = 0, METER_SPAN x = 1)."""
+    if ratio <= 1:
+        return 0.0
+    return min(1.0, math.log(ratio) / math.log(METER_SPAN))
+
+
+# ---------------------------------------------------------------- start with Windows
+RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+RUN_NAME = "WaveFlow"
+
+
+def autostart_command() -> str:
+    if getattr(sys, "frozen", False):
+        return f'"{sys.executable}"'
+    exe = Path(sys.executable)
+    pyw = exe.with_name("pythonw.exe")
+    return f'"{pyw if pyw.exists() else exe}" "{ROOT / "app" / "waveflow.py"}"'
+
+
+def autostart_enabled() -> bool:
+    if sys.platform != "win32":
+        return False
+    import winreg
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as k:
+            return winreg.QueryValueEx(k, RUN_NAME)[0] == autostart_command()
+    except OSError:
+        return False
+
+
+def set_autostart(on: bool) -> None:
+    """Only this user's Run entry named WaveFlow; nothing machine-wide."""
+    if sys.platform != "win32":
+        return
+    import winreg
+    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE) as k:
+        if on:
+            winreg.SetValueEx(k, RUN_NAME, 0, winreg.REG_SZ, autostart_command())
+        else:
+            try:
+                winreg.DeleteValue(k, RUN_NAME)
+            except OSError:
+                pass
 
 
 def normalize_url(s: str, https: bool = False, default_port: int = 8756) -> str:

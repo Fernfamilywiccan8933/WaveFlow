@@ -32,6 +32,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from audio import MicStream, ReplayMic, clean_input_devices, float_to_wav16k  # noqa: E402
+from icons import app_icon, tray_icon  # noqa: E402
 from stt import (auth_headers, cleanup, focus_window, inject_text, send_backspaces,  # noqa: E402
                  send_text, strip_fillers, transcribe, window_title)
 
@@ -843,12 +844,19 @@ class WaveFlow(QWidget):
     def _open_setup(self):
         from wizard import SetupWizard
         dlg = SetupWizard(self.cfg, self.engine, devices_fn=clean_input_devices)
+        dlg.setWindowIcon(app_icon())
         dlg.exec()
         if not dlg.result_cfg:
             log.info("setup closed without saving")
             return
-        old_mode = (self.cfg.get("engine") or {}).get("mode")
-        self.cfg = dlg.result_cfg
+        self._apply_cfg(dlg.result_cfg)
+        self.tray.showMessage("WaveFlow", "Setup saved — press the hotkey and speak.",
+                              QSystemTrayIcon.Information, 2500)
+
+    def _apply_cfg(self, new_cfg: dict):
+        """Adopt a saved config from Setup or Settings: url, token, mic, skin, hotkey, engine."""
+        old_engine = dict(self.cfg.get("engine") or {})
+        self.cfg = new_cfg
         save_config(self.cfg)
         self.url = self.cfg["url"]
         self.token = self.cfg.get("token", "")
@@ -857,13 +865,13 @@ class WaveFlow(QWidget):
         self._apply_skin(self.cfg.get("skin", DEFAULT_SKIN), persist=False)
         self._start_hotkey()
         self._offline = self._err_shown = False
-        if old_mode == "local" and self.cfg["engine"].get("mode") != "local":
-            self.engine.stop()                      # moved off this PC: do not leave it running
+        new_engine = self.cfg.get("engine") or {}
+        if old_engine.get("mode") == "local" and (new_engine.get("mode") != "local" or any(
+                old_engine.get(k) != new_engine.get(k) for k in ("engine", "threads", "device"))):
+            self.engine.stop()                      # moved off this PC, or changed: restart below
         self._start_local_engine()
-        log.info("setup saved: mode=%s engine=%s url=%s", self.cfg["engine"].get("mode"),
-                 self.cfg["engine"].get("engine"), self.url)
-        self.tray.showMessage("WaveFlow", "Setup saved — press the hotkey and speak.",
-                              QSystemTrayIcon.Information, 2500)
+        log.info("config applied: mode=%s engine=%s url=%s sens=%s", new_engine.get("mode"),
+                 new_engine.get("engine"), self.url, self.cfg.get("mic_sensitivity", "balanced"))
 
     # ---- skins ----
     def _on_skin_action(self, name: str):
@@ -1069,19 +1077,8 @@ class WaveFlow(QWidget):
         self.toggle_listen()
 
     # ---- tray / hotkey ----
-    def _icon(self):
-        pix = QPixmap(32, 32)
-        pix.fill(Qt.transparent)
-        p = QPainter(pix)
-        p.setRenderHint(QPainter.Antialiasing, True)
-        p.setBrush(QColor(44, 46, 52))
-        p.setPen(Qt.NoPen)
-        p.drawRoundedRect(2, 2, 28, 28, 14, 14)
-        p.setPen(QPen(CHROMA[0], 2))
-        for i, hgt in enumerate((6, 12, 8, 14, 7)):
-            p.drawLine(8 + i * 4, 16 - hgt // 2, 8 + i * 4, 16 + hgt // 2)
-        p.end()
-        return QIcon(pix)
+    def _icon(self, listening: bool = False):
+        return tray_icon(listening)
 
     def _make_tray(self):
         self.tray = QSystemTrayIcon(self._icon(), self)
@@ -1153,53 +1150,22 @@ class WaveFlow(QWidget):
             self.hide()
             self.ghost.hide()
 
-    # ---- settings dialog (⚙ → Settings…) ----
+    # ---- settings window (⚙ → Settings…) ----
     def _open_settings(self):
-        from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QFormLayout,
-                                       QKeySequenceEdit, QLabel as QL)
-        from PySide6.QtGui import QKeySequence
+        from settings import SettingsWindow
 
-        def to_kb(seq: str) -> str:
-            # Qt "Ctrl+Alt+Space" -> keyboard-lib "ctrl+alt+space"
-            return seq.replace("Meta", "windows").lower().replace(" ", "")
+        def apply_now(part: dict):          # token rotation already changed the server
+            self._apply_cfg({**self.cfg, **part})
 
-        dlg = QDialog(self)
-        dlg.setWindowTitle("WaveFlow settings")
-        dlg.setStyleSheet(
-            "QDialog{background:#26282e;} QLabel{color:#cdd4e0;font-size:12px;}"
-            "QKeySequenceEdit{background:#32353d;color:#e8ecf4;border:1px solid #454a56;"
-            "border-radius:6px;padding:4px;}")
-        from PySide6.QtWidgets import QHBoxLayout, QPushButton as QP, QWidget as QW
-        form = QFormLayout(dlg)
-        show_edit = QKeySequenceEdit(QKeySequence(self.cfg["hotkey_show"] or ""))
-
-        def row(edit):
-            box = QW()
-            lay = QHBoxLayout(box)
-            lay.setContentsMargins(0, 0, 0, 0)
-            lay.addWidget(edit, 1)
-            clr = QP("Clear")
-            clr.setFixedWidth(52)
-            clr.setStyleSheet("QPushButton{background:#3a3e48;color:#cdd4e0;border:none;"
-                              "border-radius:6px;padding:4px;font-size:11px;}"
-                              "QPushButton:hover{background:#454a56;}")
-            clr.clicked.connect(edit.clear)
-            lay.addWidget(clr)
-            return box
-
-        form.addRow("Summon / dictate hotkey", row(show_edit))
-        hint = QL("Press once to open and start listening; press again to\n"
-                  "type what you said and hide. Double-click the pill also works.")
-        hint.setStyleSheet("color:#8a93a3;font-size:11px;")
-        form.addRow(hint)
-        bb = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
-        bb.accepted.connect(dlg.accept)
-        bb.rejected.connect(dlg.reject)
-        form.addRow(bb)
-        if dlg.exec() == QDialog.Accepted:
-            self.cfg["hotkey_show"] = to_kb(show_edit.keySequence().toString()) or "ctrl+alt+w"
-            save_config(self.cfg)
-            self._start_hotkey()
+        dlg = SettingsWindow(self.cfg, self.engine, devices_fn=clean_input_devices, apply_now=apply_now,
+                             open_setup=lambda: QTimer.singleShot(0, self._open_setup))
+        dlg.setWindowIcon(app_icon())
+        dlg.exec()
+        if dlg.quit_requested:
+            QApplication.quit()
+            return
+        if dlg.result_cfg:
+            self._apply_cfg(dlg.result_cfg)
 
     # ---- dictation ----
     def _summon(self):
@@ -2001,6 +1967,10 @@ class WaveFlow(QWidget):
         self.tray.showMessage("WaveFlow", msg, QSystemTrayIcon.Warning, 4000)
 
     def _tick(self):
+        listening = self.state == "listening"
+        if listening != getattr(self, "_tray_listening", False):
+            self._tray_listening = listening          # tray W turns mint while the mic is live
+            self.tray.setIcon(self._icon(listening))
         if self.state == "listening" and self.mic:
             self.wave.set_spectrum(self._spectrum())
         else:
@@ -2187,6 +2157,7 @@ def main() -> int:
 
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
+    app.setWindowIcon(app_icon())
     ui = WaveFlow(args)
     app.aboutToQuit.connect(ui.ghost.close)   # never leave the ghost stuck on screen
     app.aboutToQuit.connect(ui.engine.stop)   # the local engine lives and dies with the app

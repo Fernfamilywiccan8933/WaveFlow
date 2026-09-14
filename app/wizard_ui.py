@@ -267,6 +267,194 @@ class TitleBar(QWidget):
         self._drag = None
 
 
+def _chroma(width: float) -> QLinearGradient:
+    g = QLinearGradient(0, 0, width, 0)
+    for at, col in ((0, MINT), (0.45, SKY), (0.8, VIO), (1, BLUSH)):
+        g.setColorAt(at, QColor(col))
+    return g
+
+
+class SkinCard(QAbstractButton):
+    """Skin row (mock v3): a drawn preview of the overlay on a tinted stage, then name + description."""
+
+    def __init__(self, key: str, label: str, desc: str = "", parent=None):
+        super().__init__(parent)
+        self.key, self.label, self.desc = key, label, desc
+        self.setCheckable(True)
+        self.setAutoExclusive(True)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setFixedHeight(90)
+        self.setMinimumWidth(300)
+
+    def paintEvent(self, _):
+        import math
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        r = QRectF(self.rect()).adjusted(3, 3, -3, -3)
+        if self.isChecked():
+            _ring(p, r, 12, SKY)
+        else:
+            p.setPen(QPen(LINE, 1))
+            p.drawPath(rounded(r, 12))
+        stage = QRectF(r.x() + 12, r.y() + 12, min(200.0, r.width() * 0.52), r.height() - 24)
+        sg = QLinearGradient(stage.topLeft(), stage.bottomRight())
+        sg.setColorAt(0, QColor("#2b3a4d"))
+        sg.setColorAt(1, QColor("#3b2d4a"))
+        p.fillPath(rounded(stage, 10), sg)
+        if self.key == "halo":
+            pill = QRectF(0, 0, stage.width() * 0.72, 38)
+        else:
+            pill = QRectF(0, 0, stage.width() - 10, 44)
+        pill.moveCenter(stage.center())
+        rad = pill.height() / 2
+        p.fillPath(rounded(pill, rad), QColor(8, 10, 14, 225))
+        if self.key == "halo":
+            p.setPen(QPen(QColor(138, 123, 255, 180), 1.5))
+            p.drawPath(rounded(pill, rad))
+            bars = [4, 7, 11, 15, 19, 22, 19, 15, 11, 7, 4]
+            bw, gap = 3.0, 5.0
+            x0 = pill.center().x() - (len(bars) * (bw + gap) - gap) / 2
+            for i, bh in enumerate(bars):
+                br = QRectF(x0 + i * (bw + gap), pill.center().y() - bh / 2, bw, bh)
+                g = QLinearGradient(0, br.top(), 0, br.bottom())
+                g.setColorAt(0, QColor(MINT))
+                g.setColorAt(1, QColor(VIO))
+                p.fillPath(rounded(br, 1.5), g)
+        else:
+            p.setPen(QPen(QColor(255, 255, 255, 50), 1))
+            p.drawPath(rounded(pill, rad))
+            g = QLinearGradient(pill.left(), 0, pill.right(), 0)
+            for at, col in ((0, MINT), (0.45, SKY), (0.8, VIO), (1, BLUSH)):
+                g.setColorAt(at, QColor(col))
+            for amp, wd, alpha, ph in ((8, 5.5, 45, 0), (8, 2.2, 255, 0), (5, 1.2, 140, 0.8)):
+                path = QPainterPath()
+                x0, x1, cy = pill.left() + 14, pill.right() - 14, pill.center().y()
+                for k in range(61):
+                    t = k / 60
+                    y = cy + amp * math.sin(t * math.pi * 3 + ph)
+                    (path.lineTo if k else path.moveTo)(x0 + (x1 - x0) * t, y)
+                p.setOpacity(alpha / 255)
+                p.strokePath(path, QPen(g, wd, Qt.SolidLine, Qt.RoundCap))
+            p.setOpacity(1)
+        tx = stage.right() + 14
+        p.setFont(font(13.5, QFont.DemiBold))
+        p.setPen(TX)
+        p.drawText(QRectF(tx, r.y(), r.right() - tx - 8, r.height() / 2 - 1), Qt.AlignBottom | Qt.AlignLeft, self.label)
+        p.setFont(font(11.5))
+        p.setPen(MUT)
+        p.drawText(QRectF(tx, r.center().y() + 3, r.right() - tx - 8, r.height() / 2 - 6),
+                   Qt.AlignTop | Qt.AlignLeft | Qt.TextWordWrap, self.desc)
+
+
+class LevelMeter(QWidget):
+    """Mic level relative to the room's noise floor (mock v3: gradient fill, glowing white line at the
+    speech threshold). Talking must push the fill past the line; room noise must stay left of it."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.level, self.threshold = 0.0, 0.44
+        self.setFixedHeight(20)
+        self.setMinimumWidth(200)
+
+    def set_level(self, pos: float):
+        self.level = self.level * 0.4 + max(0.0, min(1.0, pos)) * 0.6
+        self.update()
+
+    def set_threshold(self, pos: float):
+        self.threshold = max(0.0, min(1.0, pos))
+        self.update()
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        r = QRectF(self.rect()).adjusted(0, 5, 0, -5)
+        p.fillPath(rounded(r, 5), QColor(255, 255, 255, 15))
+        if self.level > 0.005:
+            fill = QRectF(r.x(), r.y(), max(r.height(), r.width() * self.level), r.height())
+            p.fillPath(rounded(fill, 5), _chroma(r.width()))
+        x = r.x() + r.width() * self.threshold
+        glow = QColor(255, 255, 255, 60)
+        p.setPen(QPen(glow, 6, Qt.SolidLine, Qt.RoundCap))
+        p.drawLine(QPoint(int(x), 3), QPoint(int(x), self.height() - 3))
+        p.setPen(QPen(QColor("#ffffff"), 2, Qt.SolidLine, Qt.RoundCap))
+        p.drawLine(QPoint(int(x), 1), QPoint(int(x), self.height() - 1))
+
+
+class Toggle(QAbstractButton):
+    """On/off switch (mint→sky when on)."""
+
+    def __init__(self, on=False, parent=None):
+        super().__init__(parent)
+        self.setCheckable(True)
+        self.setChecked(on)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setFixedSize(38, 22)
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setOpacity(1 if self.isEnabled() else 0.4)
+        r = QRectF(1, 1, 36, 20)
+        p.setPen(Qt.NoPen)
+        if self.isChecked():
+            g = QLinearGradient(0, 0, 36, 0)
+            g.setColorAt(0, QColor(MINT))
+            g.setColorAt(1, QColor(SKY))
+            p.setBrush(g)
+        else:
+            p.setBrush(QColor("#2a2f3c"))
+        p.drawRoundedRect(r, 10, 10)
+        p.setBrush(QColor("#ffffff") if self.isChecked() else MUT)
+        p.drawEllipse(QRectF(19 if self.isChecked() else 4, 4, 14, 14))
+
+
+NAV_GLYPHS = {
+    "conn": [((6, 10), (10, 6)), ((5, 7), (3.5, 8.5), (3.5, 11), (5, 12.5), (7, 12.5), (8.5, 11)),
+             ((11, 9), (12.5, 7.5), (12.5, 5), (11, 3.5), (9, 3.5), (7.5, 5))],
+    "eng": [((4, 4), (12, 4), (12, 12), (4, 12), (4, 4)), ((6, 1.5), (6, 4)), ((10, 1.5), (10, 4)),
+            ((6, 12), (6, 14.5)), ((10, 12), (10, 14.5))],
+    "mic": [((6.5, 3), (6.5, 8), (8, 9.5), (9.5, 8), (9.5, 3), (8, 1.5), (6.5, 3)),
+            ((3.5, 7.5), (4.5, 10.5), (8, 12.5), (11.5, 10.5), (12.5, 7.5)), ((8, 12.5), (8, 14.5))],
+    "look": [((1.5, 4), (14.5, 4), (14.5, 12), (1.5, 12), (1.5, 4)), ((4, 7), (5, 7)), ((7, 7), (8, 7)),
+             ((10, 7), (12, 7)), ((4, 9.5), (12, 9.5))],
+    "adv": [((3, 4), (13, 4)), ((3, 8), (13, 8)), ((3, 12), (13, 12)), ((6, 3), (6, 5)), ((10, 7), (10, 9)),
+            ((5, 11), (5, 13))],
+    "un": [((3, 4.5), (13, 4.5)), ((6, 4.5), (6, 3), (10, 3), (10, 4.5)), ((4.5, 4.5), (5.2, 13.5), (10.8, 13.5),
+                                                                          (11.5, 4.5))],
+}
+
+
+class NavItem(QAbstractButton):
+    """Settings side-menu row: line glyph + label; current row gets a sky edge."""
+
+    def __init__(self, key: str, label: str, danger=False, parent=None):
+        super().__init__(parent)
+        self.key, self.label, self.danger = key, label, danger
+        self.setCheckable(True)
+        self.setAutoExclusive(True)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setFixedHeight(38)
+
+    def paintEvent(self, _):
+        from PySide6.QtCore import QPointF
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        r = QRectF(self.rect())
+        on = self.isChecked()
+        if on:
+            p.fillPath(rounded(r.adjusted(0, 2, 0, -2), 8), QColor(255, 255, 255, 15))
+            p.fillRect(QRectF(0, 9, 2, r.height() - 18), QColor(SKY))
+        col = QColor("#d98a96") if self.danger else (TX if on else MUT)
+        p.setPen(QPen(col, 1.5, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        p.save()
+        p.translate(12, r.height() / 2 - 8)
+        for line in NAV_GLYPHS.get(self.key, []):
+            p.drawPolyline([QPointF(*pt) for pt in line])
+        p.restore()
+        p.setFont(font(13, QFont.DemiBold if on else QFont.Normal))
+        p.drawText(QRectF(38, 0, r.width() - 40, r.height()), Qt.AlignVCenter | Qt.AlignLeft, self.label)
+
+
 def round_window_corners(widget):
     """Windows 11: rounded corners + native shadow for a frameless window (no-op elsewhere)."""
     if sys.platform != "win32":
