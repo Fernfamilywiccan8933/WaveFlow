@@ -4,7 +4,9 @@
 #   2. Create docker/.env with:
 #        WAVEFLOW_DOMAIN=stt.example.com
 #        WAVEFLOW_TOKEN=<long random string>     # e.g. python -c "import secrets;print(secrets.token_urlsafe(32))"
+#        WAVEFLOW_DOCKERFILE=docker/onnx/Dockerfile   # or docker/onnx-gpu/Dockerfile, docker/nemo/Dockerfile
 #   3. docker compose -f docker/compose.vps.yml up -d --build
+#      GPU engines add the GPU:  -f docker/compose.vps.yml -f docker/compose.gpu.yml
 #   4. In the app: URL https://stt.example.com, same token.
 #
 # The server port is NOT published. Only Caddy (80/443) faces the internet.
@@ -12,7 +14,7 @@ services:
   waveflow:
     build:
       context: ..
-      dockerfile: docker/onnx/Dockerfile      # swap to docker/nemo/Dockerfile on an NVIDIA GPU host
+      dockerfile: ${WAVEFLOW_DOCKERFILE:-docker/onnx/Dockerfile}
     environment:
       WAVEFLOW_TOKEN: ${WAVEFLOW_TOKEN:?set WAVEFLOW_TOKEN in docker/.env}
       THREADS: ${THREADS:-4}

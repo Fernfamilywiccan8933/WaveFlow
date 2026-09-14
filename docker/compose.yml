@@ -1,47 +1,53 @@
 # This PC or an onsite server (LAN / Tailscale / VPN). A token is ALWAYS required in Docker, so
 # opening the port to other machines can never leave the server open by mistake.
+# The setup wizard writes the .env and runs the command for you (This PC — Docker).
 #
 # Create docker/.env:
 #   WAVEFLOW_TOKEN=<long random string>   # python -c "import secrets;print(secrets.token_urlsafe(32))"
 #   HOST_BIND=127.0.0.1                      # this PC only; 0.0.0.0 = reachable from your network
-#   THREADS=4                                # physical performance cores
+#   THREADS=4                                # physical performance cores (ONNX CPU)
 #
-#   docker compose -f docker/compose.yml up -d --build                  # ONNX (CPU)
-#   docker compose -f docker/compose.yml --profile nemo up -d --build   # + NeMo on NVIDIA GPU, port 8757
+# One engine at a time, or several side by side on different ports:
+#   docker compose -f docker/compose.yml up -d --build waveflow                               # ONNX CPU  :8756
+#   docker compose -f docker/compose.yml --profile onnx-gpu up -d --build waveflow-onnx-gpu   # ONNX GPU  :8759
+#   docker compose -f docker/compose.yml --profile nemo up -d --build waveflow-nemo           # NeMo GPU  :8757
+x-token: &token
+  WAVEFLOW_TOKEN: ${WAVEFLOW_TOKEN:?set WAVEFLOW_TOKEN in docker/.env}
+x-gpu: &gpu
+  resources:
+    reservations:
+      devices:
+        - driver: nvidia
+          count: 1
+          capabilities: [gpu]
+
 services:
   waveflow:
-    build:
-      context: ..
-      dockerfile: docker/onnx/Dockerfile
+    build: { context: .., dockerfile: docker/onnx/Dockerfile }
     environment:
-      WAVEFLOW_TOKEN: ${WAVEFLOW_TOKEN:?set WAVEFLOW_TOKEN in docker/.env}
+      <<: *token
       THREADS: ${THREADS:-4}
-    volumes:
-      - models:/models
-    ports:
-      - "${HOST_BIND:-127.0.0.1}:8756:8756"
+    volumes: [models:/models]
+    ports: ["${HOST_BIND:-127.0.0.1}:8756:8756"]
+    restart: unless-stopped
+
+  waveflow-onnx-gpu:
+    profiles: ["onnx-gpu"]
+    build: { context: .., dockerfile: docker/onnx-gpu/Dockerfile }
+    environment: *token
+    volumes: [models:/models]
+    ports: ["${HOST_BIND:-127.0.0.1}:8759:8756"]
+    deploy: *gpu
     restart: unless-stopped
 
   waveflow-nemo:
     profiles: ["nemo"]
-    build:
-      context: ..
-      dockerfile: docker/nemo/Dockerfile
-    environment:
-      WAVEFLOW_TOKEN: ${WAVEFLOW_TOKEN:?set WAVEFLOW_TOKEN in docker/.env}
-    volumes:
-      - hf:/root/.cache/huggingface
-    ports:
-      - "${HOST_BIND:-127.0.0.1}:8757:8756"
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
+    build: { context: .., dockerfile: docker/nemo/Dockerfile }
+    environment: *token
+    volumes: [models:/models]
+    ports: ["${HOST_BIND:-127.0.0.1}:8757:8756"]
+    deploy: *gpu
     restart: unless-stopped
 
 volumes:
   models:
-  hf:

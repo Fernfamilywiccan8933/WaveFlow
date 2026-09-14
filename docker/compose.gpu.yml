@@ -1,0 +1,11 @@
+# Add an NVIDIA GPU to the VPS engine (ONNX GPU or NeMo):
+#   docker compose -f docker/compose.vps.yml -f docker/compose.gpu.yml up -d --build
+services:
+  waveflow:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

@@ -52,6 +52,18 @@ git clone <this repo> WaveFlow
 cd WaveFlow
 py -3.12 -m venv venv
 venv\Scripts\pip install -r requirements.txt
+venv\Scripts\python app\waveflow.py
+```
+
+On first start the **setup wizard** opens (reopen it any time from ⚙ → Setup…). Pick *This PC —
+background app*, choose **ONNX · CPU** or **ONNX · GPU**, set CPU threads (Auto = your
+performance cores), and press **Start engine**. The app then starts and stops the engine itself.
+The GPU engine needs the DirectML build of ONNX Runtime; the wizard's *Install GPU support*
+button swaps it in.
+
+Without the wizard, run the engine by hand:
+
+```powershell
 # CPU:
 venv\Scripts\python server\parakeet_server.py --engine onnx --onnx-quant int8 --device cpu --threads 4
 # or GPU (DirectML):
@@ -60,13 +72,9 @@ venv\Scripts\pip install onnxruntime-directml
 venv\Scripts\python server\parakeet_server.py --engine onnx --onnx-quant fp32 --device dml
 ```
 
-The model downloads on first start. Then, in a second window, start the client:
-
-```powershell
-venv\Scripts\python app\waveflow.py
-```
-
 Default hotkey: `Ctrl+Alt+W`. Change the hotkey, mic and skin from the ⚙ menu.
+
+The `.exe` build cannot start the engine itself yet — use it with Docker or a remote server.
 
 ## B. This PC or onsite server — Docker
 

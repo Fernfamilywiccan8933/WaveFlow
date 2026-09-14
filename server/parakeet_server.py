@@ -934,6 +934,10 @@ def main():
     if ENGINE == "onnx":
         import onnx_asr
         import onnxruntime as ort
+        if args.device == "cuda" and hasattr(ort, "preload_dlls"):
+            # CUDA/cuDNN installed as pip wheels (onnxruntime-gpu[cuda,cudnn]) are not on the
+            # library path; ORT >= 1.21 loads them from site-packages when asked.
+            ort.preload_dlls()
         so = ort.SessionOptions()
         so.intra_op_num_threads = args.threads
         so.inter_op_num_threads = 1

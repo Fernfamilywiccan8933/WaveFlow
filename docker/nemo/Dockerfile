@@ -25,7 +25,7 @@ FROM python:3.11.9-slim-bookworm
 RUN apt-get update && apt-get install -y --no-install-recommends libsndfile1 \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=build /opt/venv /opt/venv
-ENV PATH=/opt/venv/bin:$PATH PYTHONUNBUFFERED=1
+ENV PATH=/opt/venv/bin:$PATH PYTHONUNBUFFERED=1 HF_HOME=/models
 COPY server/parakeet_server.py server/itn.py server/vocab.py /app/
 WORKDIR /app
 EXPOSE 8756

@@ -117,7 +117,7 @@ def save_config(cfg: dict) -> None:
     import json
     try:
         CONFIG_PATH.write_text(json.dumps(cfg, indent=2))
-        log.info("config saved: %s", cfg)
+        log.info("config saved: %s", {k: ("***" if k == "token" and v else v) for k, v in cfg.items()})
     except Exception as e:
         log.error("config save failed: %s", e)
 
@@ -828,6 +828,43 @@ class WaveFlow(QWidget):
         self._make_tray()
         self._start_hotkey()
 
+        # "This PC — background app": the app owns the engine process.
+        from local_engine import LocalEngine
+        self.engine = LocalEngine()
+        self._start_local_engine()
+
+    def _start_local_engine(self):
+        eng = self.cfg.get("engine") or {}
+        if eng.get("mode") != "local":
+            return
+        st = self.engine.start(eng, self.url)
+        log.info("local engine: %s (%s)", st, " ".join(self.engine.command(eng)[1:]))
+
+    def _open_setup(self):
+        from wizard import SetupWizard
+        dlg = SetupWizard(self.cfg, self.engine, devices_fn=clean_input_devices)
+        dlg.exec()
+        if not dlg.result_cfg:
+            log.info("setup closed without saving")
+            return
+        old_mode = (self.cfg.get("engine") or {}).get("mode")
+        self.cfg = dlg.result_cfg
+        save_config(self.cfg)
+        self.url = self.cfg["url"]
+        self.token = self.cfg.get("token", "")
+        from audio import resolve_device_name
+        self.device, self.device_name = resolve_device_name(self.cfg.get("device_name"))
+        self._apply_skin(self.cfg.get("skin", DEFAULT_SKIN), persist=False)
+        self._start_hotkey()
+        self._offline = self._err_shown = False
+        if old_mode == "local" and self.cfg["engine"].get("mode") != "local":
+            self.engine.stop()                      # moved off this PC: do not leave it running
+        self._start_local_engine()
+        log.info("setup saved: mode=%s engine=%s url=%s", self.cfg["engine"].get("mode"),
+                 self.cfg["engine"].get("engine"), self.url)
+        self.tray.showMessage("WaveFlow", "Setup saved — press the hotkey and speak.",
+                              QSystemTrayIcon.Information, 2500)
+
     # ---- skins ----
     def _on_skin_action(self, name: str):
         """A Skin menu item was activated. Logged with its source because a skin the user
@@ -990,6 +1027,7 @@ class WaveFlow(QWidget):
             skin_menu.addAction(a)
         m.addAction(f"Last STT: {self.last_ms}ms" if self.last_ms else "Last STT: —").setEnabled(False)
         m.addSeparator()
+        m.addAction("Setup…", self._open_setup)
         m.addAction("Settings…", self._open_settings)
         m.addAction("Hide", self.hide_to_tray)
         m.addAction("Quit", QApplication.quit)
@@ -1050,6 +1088,7 @@ class WaveFlow(QWidget):
         self.tray.setToolTip("WaveFlow")
         menu = QMenu()
         menu.addAction("Show / Dictate", self._summon)
+        menu.addAction("Setup…", self._open_setup)
         menu.addAction("Settings…", self._open_settings)
         menu.addAction("Quit", QApplication.quit)
         self.tray.setContextMenu(menu)
@@ -2149,6 +2188,7 @@ def main() -> int:
     app.setQuitOnLastWindowClosed(False)
     ui = WaveFlow(args)
     app.aboutToQuit.connect(ui.ghost.close)   # never leave the ghost stuck on screen
+    app.aboutToQuit.connect(ui.engine.stop)   # the local engine lives and dies with the app
     sw = app.primaryScreen().geometry()
     ui.move((sw.width() - ui.width()) // 2, sw.height() - ui.height() - 110)
     if args.demo:
@@ -2162,8 +2202,11 @@ def main() -> int:
         # start in the TRAY, not visible-idle: the hotkey model is idle->listen /
         # listening->commit, so a visible idle widget at launch desynced the
         # user's press count (first press hid it instead of listening)
-        ui.tray.showMessage("WaveFlow", "Ready — press the hotkey and speak.",
-                            QSystemTrayIcon.Information, 2500)
+        if not ui.cfg.get("setup_done") and not (args.url or args.token):
+            QTimer.singleShot(300, ui._open_setup)          # first run
+        else:
+            ui.tray.showMessage("WaveFlow", "Ready — press the hotkey and speak.",
+                                QSystemTrayIcon.Information, 2500)
     return app.exec()
 
 
