@@ -1,0 +1,10 @@
+{
+  "hotkey_show": "ctrl+alt+w",
+  "hotkey_capture": "",
+  "device_name": null,
+  "silence_commit_s": 6.0,
+  "stream_latency": 16,
+  "url": "http://127.0.0.1:8756",
+  "token": "",
+  "skin": "aurora"
+}

@@ -1,0 +1,39 @@
+# Offsite VPS: WaveFlow server behind Caddy (automatic HTTPS). Token REQUIRED.
+#
+#   1. Point a DNS name at the VPS (e.g. stt.example.com).
+#   2. Create docker/.env with:
+#        WAVEFLOW_DOMAIN=stt.example.com
+#        WAVEFLOW_TOKEN=<long random string>     # e.g. python -c "import secrets;print(secrets.token_urlsafe(32))"
+#   3. docker compose -f docker/compose.vps.yml up -d --build
+#   4. In the app: URL https://stt.example.com, same token.
+#
+# The server port is NOT published. Only Caddy (80/443) faces the internet.
+services:
+  waveflow:
+    build:
+      context: ..
+      dockerfile: docker/onnx/Dockerfile      # swap to docker/nemo/Dockerfile on an NVIDIA GPU host
+    environment:
+      WAVEFLOW_TOKEN: ${WAVEFLOW_TOKEN:?set WAVEFLOW_TOKEN in docker/.env}
+      THREADS: ${THREADS:-4}
+    volumes:
+      - models:/models
+    expose:
+      - "8756"
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2
+    command: caddy reverse-proxy --from ${WAVEFLOW_DOMAIN:?set WAVEFLOW_DOMAIN in docker/.env} --to waveflow:8756
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - caddy_data:/data
+    depends_on:
+      - waveflow
+    restart: unless-stopped
+
+volumes:
+  models:
+  caddy_data:

@@ -1,0 +1,10 @@
+# Engine server, ONNX (any OS). For NeMo use docker/nemo/Dockerfile.
+onnx-asr==0.12.0
+onnxruntime==1.30.0
+huggingface_hub
+numpy
+fastapi
+uvicorn
+python-multipart
+websockets
+webrtcvad-wheels

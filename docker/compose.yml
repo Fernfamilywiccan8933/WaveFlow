@@ -1,0 +1,47 @@
+# This PC or an onsite server (LAN / Tailscale / VPN). A token is ALWAYS required in Docker, so
+# opening the port to other machines can never leave the server open by mistake.
+#
+# Create docker/.env:
+#   WAVEFLOW_TOKEN=<long random string>   # python -c "import secrets;print(secrets.token_urlsafe(32))"
+#   HOST_BIND=127.0.0.1                      # this PC only; 0.0.0.0 = reachable from your network
+#   THREADS=4                                # physical performance cores
+#
+#   docker compose -f docker/compose.yml up -d --build                  # ONNX (CPU)
+#   docker compose -f docker/compose.yml --profile nemo up -d --build   # + NeMo on NVIDIA GPU, port 8757
+services:
+  waveflow:
+    build:
+      context: ..
+      dockerfile: docker/onnx/Dockerfile
+    environment:
+      WAVEFLOW_TOKEN: ${WAVEFLOW_TOKEN:?set WAVEFLOW_TOKEN in docker/.env}
+      THREADS: ${THREADS:-4}
+    volumes:
+      - models:/models
+    ports:
+      - "${HOST_BIND:-127.0.0.1}:8756:8756"
+    restart: unless-stopped
+
+  waveflow-nemo:
+    profiles: ["nemo"]
+    build:
+      context: ..
+      dockerfile: docker/nemo/Dockerfile
+    environment:
+      WAVEFLOW_TOKEN: ${WAVEFLOW_TOKEN:?set WAVEFLOW_TOKEN in docker/.env}
+    volumes:
+      - hf:/root/.cache/huggingface
+    ports:
+      - "${HOST_BIND:-127.0.0.1}:8757:8756"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+
+volumes:
+  models:
+  hf:

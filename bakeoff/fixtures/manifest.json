@@ -1,0 +1,10 @@
+{
+  "s01_plain.wav": "The quick brown fox jumps over the lazy dog near the riverbank.",
+  "s02_dictation.wav": "Please schedule the meeting for Tuesday at three thirty and send the notes to the whole team.",
+  "s03_jargon.wav": "Restart the docker container, check nvidia smi for VRAM usage, and tail the pipeline log.",
+  "s04_numbers.wav": "The order total is forty seven dollars and ninety five cents for twelve items.",
+  "s05_short.wav": "Send it.",
+  "x01_silence.wav": "",
+  "x02_noisefloor.wav": "",
+  "x03_hum.wav": ""
+}

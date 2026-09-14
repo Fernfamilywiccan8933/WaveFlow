@@ -1,0 +1,5 @@
+{
+  "_comment": "Copy to vocab.user.json (or point WAVEFLOW_VOCAB at your file). Key = the spelling you want. Value = regex patterns for how the model mis-hears it. Matching ignores case and never fires inside a word.",
+  "Kubernetes": ["(?:cooper|kuber|cuber)\\s*(?:netties|nettys|neatees|netes)"],
+  "PostgreSQL": ["post\\s*(?:gress|gres|gray)\\s*(?:q\\s*l|sequel)"]
+}
