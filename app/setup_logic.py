@@ -196,8 +196,14 @@ def new_token() -> str:
 
 
 def app_data() -> Path:
-    base = os.environ.get("LOCALAPPDATA") or str(Path.home() / ".local" / "share")
-    return Path(base) / "WaveFlow"
+    """Everything WaveFlow writes (models, docker .env, engine log) lives INSIDE its own folder, so
+    two copies on one PC never share files and deleting the folder removes it completely.
+    WAVEFLOW_DATA overrides the location."""
+    return Path(os.environ.get("WAVEFLOW_DATA") or (ROOT / "data"))
+
+
+def models_dir() -> Path:
+    return app_data() / "models"
 
 
 def server_args(c: Choices, host: str = "127.0.0.1", port: int = 8756) -> list[str]:

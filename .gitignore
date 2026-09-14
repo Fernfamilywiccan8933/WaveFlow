@@ -28,3 +28,6 @@ vocab.user.json
 
 # bundled test clip for the setup wizard
 !app/assets/sample.wav
+
+# this copy's own models, logs, docker .env
+data/

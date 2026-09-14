@@ -6,6 +6,7 @@ failed start can be read. Runs from a source checkout (same Python as the app).
 """
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import time
@@ -47,8 +48,10 @@ class LocalEngine:
         self.stop()
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
         logf = open(self.log_path, "w", encoding="utf-8", errors="replace")
+        # Models download into this copy's own data folder, never the shared user-profile cache.
+        env = {**os.environ, "HF_HOME": str(S.models_dir())}
         self.proc = subprocess.Popen(self.command(engine_cfg), stdout=logf, stderr=subprocess.STDOUT,
-                                     cwd=str(S.ROOT / "server"),
+                                     cwd=str(S.ROOT / "server"), env=env,
                                      creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         return "starting"
 

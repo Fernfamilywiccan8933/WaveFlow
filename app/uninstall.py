@@ -37,9 +37,8 @@ class Item:
 
 
 def hf_hub() -> Path:
-    if os.environ.get("HF_HUB_CACHE"):
-        return Path(os.environ["HF_HUB_CACHE"])
-    base = Path(os.environ["HF_HOME"]) if os.environ.get("HF_HOME") else Path.home() / ".cache" / "huggingface"
+    """Where THIS copy's engine downloads models (local_engine sets HF_HOME to it)."""
+    base = Path(os.environ["HF_HOME"]) if os.environ.get("HF_HOME") else S.models_dir()
     return base / "hub"
 
 
