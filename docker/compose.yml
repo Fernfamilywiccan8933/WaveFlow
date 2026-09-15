@@ -21,8 +21,11 @@ x-gpu: &gpu
           count: 1
           capabilities: [gpu]
 
+# Images get real names (not Compose's "docker-<service>:latest") so `docker images` says what they are.
+# Uninstall runs `down --rmi all`, which removes only the images these services use.
 services:
   waveflow:
+    image: waveflow-onnx:cpu
     build: { context: .., dockerfile: docker/onnx/Dockerfile }
     environment:
       <<: *token
@@ -33,6 +36,7 @@ services:
 
   waveflow-onnx-gpu:
     profiles: ["onnx-gpu"]
+    image: waveflow-onnx:gpu
     build: { context: .., dockerfile: docker/onnx-gpu/Dockerfile }
     environment: *token
     volumes: [models:/models]
@@ -42,6 +46,7 @@ services:
 
   waveflow-nemo:
     profiles: ["nemo"]
+    image: waveflow-nemo:slim
     build: { context: .., dockerfile: docker/nemo/Dockerfile }
     environment: *token
     volumes: [models:/models]

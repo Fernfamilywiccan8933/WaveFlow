@@ -12,6 +12,7 @@
 # The server port is NOT published. Only Caddy (80/443) faces the internet.
 services:
   waveflow:
+    image: waveflow-server:vps
     build:
       context: ..
       dockerfile: ${WAVEFLOW_DOCKERFILE:-docker/onnx/Dockerfile}

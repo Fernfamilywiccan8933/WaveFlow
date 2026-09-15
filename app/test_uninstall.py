@@ -56,7 +56,7 @@ with tempfile.TemporaryDirectory() as t:
         autostart[0] = True
         items = {i.key: i for i in U.scan(root / "app" / "config.json")}
         check("all items listed", list(items),
-              ["engine", "models", "docker", "settings", "shortcuts", "vocab", "folder"])
+              ["server", "engine", "models", "docker", "settings", "shortcuts", "vocab", "folder"])
         check("shortcuts item found", (items["shortcuts"].present, len(items["shortcuts"].paths)), (True, 2))
         U.run([items["shortcuts"]], {"shortcuts"}, log=lambda *_: None)
         check("shortcuts removed, autostart off, other .lnk kept",
@@ -114,7 +114,40 @@ with tempfile.TemporaryDirectory() as t:
 
 check("vps remote commands", U.remote_commands({"engine": {"mode": "vps"}})[0].startswith("docker compose -f docker/compose.vps.yml down"), True)
 check("local has no remote commands", U.remote_commands({"engine": {"mode": "local"}}), [])
-check("docker down only removes local images + our volumes", U.docker_down_cmd()[-3:], ["--rmi", "local", "-v"])
+check("docker down removes our named images + volumes", U.docker_down_cmd()[-3:], ["--rmi", "all", "-v"])
+compose_text = (Path(__file__).resolve().parent.parent / "docker" / "compose.yml").read_text()
+check("compose images have real names", all(n in compose_text for n in
+                                             ("waveflow-onnx:cpu", "waveflow-onnx:gpu", "waveflow-nemo:slim")),
+      True)
+
+# --- server installed over SSH is removed over SSH -----------------------------------------------
+onsite = {"url": "http://gpu-box:8757", "token": "secret-token-123456",
+          "engine": {"mode": "onsite", "method": "docker", "engine": "nemo", "ssh_user": "bob",
+                     "folder": "~/waveflow"}}
+check("ssh-installed server is a remote target", U.remote_target(onsite), ("bob", "gpu-box", "~/waveflow"))
+script = U.remote_uninstall_script(onsite)
+check("only deletes a folder that holds our compose file",
+      script.startswith("if [ -f ~/waveflow/docker/compose.yml ]; then"), True)
+check("down removes images, volumes; base images without force",
+      ("down --rmi all -v" in script, "docker image rm $i" in script, "--force" in script or " -f $i" in script),
+      (True, True, False))
+check("token never in the uninstall script", "secret-token" in script, False)
+for bad in ("~", "~/", "/", ""):
+    check(f"refuses to target folder {bad!r}",
+          U.remote_target({**onsite, "engine": {**onsite["engine"], "folder": bad}}), None)
+check("venv / manual installs are not removed over SSH",
+      U.remote_target({**onsite, "engine": {**onsite["engine"], "method": "venv"}}), None)
+check("no ssh user -> manual commands shown instead", U.remote_target({**onsite, "engine": {
+    k: v for k, v in onsite["engine"].items() if k != "ssh_user"}}), None)
+calls = []
+with mock.patch.object(U.subprocess, "run", lambda argv, **k: calls.append(argv) or mock.Mock(
+        returncode=0, stdout="removed ~/waveflow\n", stderr="")):
+    errs = U.run([U.Item("server", "s", "s", present=True, cfg=onsite)], {"server"}, log=lambda *_: None)
+check("server item runs one ssh with BatchMode", (errs, calls[0][0], "BatchMode=yes" in calls[0]), ([], "ssh", True))
+with mock.patch.object(U.subprocess, "run", lambda argv, **k: mock.Mock(
+        returncode=255, stdout="", stderr="Permission denied (publickey)")):
+    errs = U.run([U.Item("server", "s", "s", present=True, cfg=onsite)], {"server"}, log=lambda *_: None)
+check("ssh key rejected -> reported, not silent", bool(errs) and "SSH key" in errs[0], True)
 
 if FAILS:
     print("UNINSTALL_FAIL\n" + "\n".join(FAILS))

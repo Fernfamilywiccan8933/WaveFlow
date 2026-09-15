@@ -35,6 +35,7 @@ class Item:
     default: bool = True
     paths: list[Path] = field(default_factory=list)
     present: bool = True
+    cfg: dict = field(default_factory=dict)      # "server": the saved config that says where it was installed
 
 
 def hf_hub() -> Path:
@@ -87,7 +88,7 @@ def docker_base_rm_cmd(image: str) -> list[str]:
 
 def docker_down_cmd() -> list[str]:
     return ["docker", "compose", "-f", str(COMPOSE), "--profile", "nemo", "--profile", "onnx-gpu",
-            "down", "--rmi", "local", "-v"]
+            "down", "--rmi", "all", "-v"]     # images are named in compose.yml, so "local" would keep them
 
 
 def _docker_has_ours() -> bool:
@@ -110,7 +111,16 @@ def scan(config_path: Path | None = None) -> list[Item]:
                             S.ROOT / "app" / "waveflow.log") if p.exists()]
     vocab = [p for p in (S.ROOT / "server" / "vocab.user.json",) if p.exists()]
     shortcuts = S.shortcuts_ours()
+    try:
+        import json
+        cfg = json.loads(config_path.read_text(encoding="utf-8")) if config_path.exists() else {}
+    except (OSError, ValueError):
+        cfg = {}
+    target = remote_target(cfg)
     items = [
+        Item("server", f"Server install on {target[1]}" if target else "Server install",
+             f"{target[0]}@{target[1]}:{target[2]} — container, image, volumes, files (over SSH)" if target
+             else "none set up by WaveFlow", 0, True, [], bool(target), cfg),
         Item("engine", "Local engine", "stop it if it is running", 0, True, [], True),
         Item("models", "Downloaded models", ", ".join(str(m) for m in models) or "none found",
              sum(size_of(m) for m in models), True, models, bool(models)),
@@ -130,14 +140,65 @@ def scan(config_path: Path | None = None) -> list[Item]:
     return items
 
 
+def remote_target(cfg: dict) -> tuple[str, str, str] | None:
+    """(user, host, folder) when setup installed the server over SSH, else None."""
+    e = cfg.get("engine") or {}
+    if e.get("mode") not in ("onsite", "vps") or e.get("method") == "venv":
+        return None
+    import remote_install as RI
+    user, folder, host = e.get("ssh_user", ""), e.get("folder", ""), RI.host_of(cfg.get("url", ""))
+    if RI.validate_target(user, host, folder) or folder.rstrip("/") in ("~", "", "/", "."):
+        return None
+    return user, host, folder
+
+
+def remote_uninstall_script(cfg: dict) -> str:
+    """Runs ON the server over SSH. Removes only what the wizard put there: our containers, our named
+    images, our volumes, the base images our Dockerfiles pulled (skipped while anything else uses them),
+    and the install folder — and only if that folder really holds our compose file."""
+    _user, _host, folder = remote_target(cfg)
+    vps = (cfg.get("engine") or {}).get("mode") == "vps"
+    compose = "docker/compose.vps.yml" if vps else "docker/compose.yml --profile nemo --profile onnx-gpu"
+    bases = " ".join(docker_base_images())
+    return (f"if [ -f {folder}/docker/compose.yml ]; then "
+            f"cd {folder} && docker compose --env-file docker/.env -f {compose} down --rmi all -v; "
+            f"for i in {bases}; do docker image rm $i >/dev/null 2>&1 && echo \"removed $i\" "
+            f"|| echo \"kept $i (in use or not present)\"; done; "
+            f"cd ~ && rm -rf {folder} && echo 'removed {folder}'; "
+            f"else echo 'nothing installed at {folder}'; fi")
+
+
 def remote_commands(cfg: dict) -> list[str]:
-    mode = (cfg.get("engine") or {}).get("mode")
-    if mode == "vps":
-        return ["docker compose -f docker/compose.vps.yml down --rmi local -v"]
-    if mode == "onsite":
-        if (cfg.get("engine") or {}).get("method") == "venv":
+    """What will run on the server (shown in the preview), or the manual steps for a venv install."""
+    e = cfg.get("engine") or {}
+    if remote_target(cfg):
+        user, host, _folder = remote_target(cfg)
+        return [f"ssh {user}@{host}", remote_uninstall_script(cfg).replace("; ", ";\n  ")]
+    if e.get("mode") == "vps":
+        return ["docker compose -f docker/compose.vps.yml down --rmi all -v"]
+    if e.get("mode") == "onsite":
+        if e.get("method") == "venv":
             return ["# stop the parakeet_server.py process, then delete the folder you cloned"]
-        return ["docker compose -f docker/compose.yml --profile nemo --profile onnx-gpu down --rmi local -v"]
+        return ["docker compose -f docker/compose.yml --profile nemo --profile onnx-gpu down --rmi all -v"]
+    return []
+
+
+def remove_remote(cfg: dict, log=print, timeout=600) -> list[str]:
+    target = remote_target(cfg)
+    if not target:
+        return []
+    import remote_install as RI
+    user, host, _folder = target
+    log(f"ssh {user}@{host}: removing the server install")
+    try:
+        r = subprocess.run(RI.ssh_cmd(user, host, remote_uninstall_script(cfg)), capture_output=True, text=True,
+                           timeout=timeout, creationflags=NOWINDOW)
+    except subprocess.TimeoutExpired:
+        return [f"server {host}: did not finish within {timeout // 60} minutes"]
+    for line in r.stdout.splitlines()[-20:]:
+        log(line)
+    if r.returncode == 255:
+        return [f"server {host}: " + RI.classify_ssh_error(r.stderr)[1]]
     return []
 
 
@@ -146,7 +207,10 @@ def plan_lines(items: list[Item], chosen: set[str]) -> list[str]:
     for it in items:
         if it.key not in chosen or not it.present:
             continue
-        if it.key == "engine":
+        if it.key == "server":
+            out += ["# on the server, over SSH:"] + remote_commands(it.cfg) + \
+                   ["# not removed: Docker's shared build cache (other builds use it too)"]
+        elif it.key == "engine":
             out.append("stop the local engine")
         elif it.key == "docker":
             out.append(" ".join(docker_down_cmd()))
@@ -191,7 +255,12 @@ def run(items: list[Item], chosen: set[str], engine=None, dry_run=False, log=pri
     for it in items:
         if it.key not in chosen or not it.present:
             continue
-        if it.key == "engine":
+        if it.key == "server":
+            if not dry_run:
+                errors += remove_remote(it.cfg, log=log)
+            else:
+                log("would remove the server install over SSH")
+        elif it.key == "engine":
             if engine is not None and not dry_run:
                 engine.stop()
             log("stopped the local engine")

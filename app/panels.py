@@ -250,8 +250,12 @@ class UninstallPanel(QWidget):
             couple(folder.isChecked())
         cmds = self.U.remote_commands(self.cfg)
         self.remote.setVisible(bool(cmds))
-        self.remote.setText("<b style='color:#ffc46b'>Onsite or VPS server?</b> Setup never logs in to your "
-                            "server. Run the commands on the right on the server to remove it there.")
+        if self.U.remote_target(self.cfg):
+            self.remote.setText("<b style='color:#ffc46b'>Server install</b> is removed over SSH with your key. "
+                                "Anything else on the server is left alone.")
+        else:
+            self.remote.setText("<b style='color:#ffc46b'>Onsite or VPS server?</b> This server was not installed "
+                                "by setup, so WaveFlow does not log in to it. Run the commands on the right there.")
         self._update_preview()
 
     def chosen(self) -> set[str]:
@@ -259,7 +263,7 @@ class UninstallPanel(QWidget):
 
     def _plain(self) -> str:
         out = self.U.plan_lines(self.items, self.chosen())
-        cmds = self.U.remote_commands(self.cfg)
+        cmds = [] if self.U.remote_target(self.cfg) else self.U.remote_commands(self.cfg)
         if cmds:
             out += ["", "# on your server:"] + cmds
         return "\n".join(out)
@@ -267,9 +271,9 @@ class UninstallPanel(QWidget):
     def _update_preview(self):
         lines = self.U.plan_lines(self.items, self.chosen())
         body = "\n".join(html.escape(x) for x in lines) or "<span style='color:#5d6477'>nothing selected</span>"
-        cmds = self.U.remote_commands(self.cfg)
+        cmds = [] if self.U.remote_target(self.cfg) else self.U.remote_commands(self.cfg)
         if cmds:
-            body += ("\n\n<span style='color:#5d6477'># on your server</span>\n" +
+            body += ("\n\n<span style='color:#5d6477'># run these on your server yourself</span>\n" +
                      "\n".join(html.escape(c) for c in cmds))
         self.preview.setHtml(f"<pre style='white-space:pre-wrap;margin:0'>{body}</pre>")
         self.go_btn.setEnabled(bool(lines))
@@ -283,7 +287,12 @@ class UninstallPanel(QWidget):
         if QMessageBox.warning(self, "Uninstall WaveFlow", msg,
                                QMessageBox.Yes | QMessageBox.Cancel, QMessageBox.Cancel) != QMessageBox.Yes:
             return
-        errors = self.U.run(self.items, chosen, engine=self.engine, log=lambda _l: None)
-        if errors and not folder:
+        from PySide6.QtWidgets import QApplication
+        QApplication.setOverrideCursor(Qt.WaitCursor)      # removing a server install can take a minute
+        try:
+            errors = self.U.run(self.items, chosen, engine=self.engine, log=lambda _l: None)
+        finally:
+            QApplication.restoreOverrideCursor()
+        if errors:
             QMessageBox.warning(self, "Uninstall WaveFlow", "Some items were not removed:\n\n" + "\n".join(errors))
         self.finished.emit(True)             # its files are gone: never keep running half-uninstalled
