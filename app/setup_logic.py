@@ -337,35 +337,76 @@ def rotation_plan(cfg: dict, new: str) -> Rotation:
 
 # ---------------------------------------------------------------- microphone sensitivity
 SENSITIVITIES = ["high", "balanced", "low"]
-# The server's speech gate: a frame counts as speech when its level passes k x the rolling noise
-# floor (server/parakeet_server.py SENSITIVITY). The meter draws that same line.
-SENSITIVITY_K = {"high": 2.0, "balanced": 3.0, "low": 4.5}
-METER_SPAN = 12.0             # the meter's right edge = 12 x the noise floor
+# Same table and blend as server/parakeet_server.py SENSITIVITY / sensitivity_params (a test holds
+# them equal). The app's slider sends a number: 0 = high (hears whispers), 50 = balanced, 100 = low.
+SENS_PRESETS = {"high": {"vad_mode": 0, "sustain_s": 0.45, "k": 2.0},
+                "balanced": {"vad_mode": 1, "sustain_s": 0.60, "k": 3.0},
+                "low": {"vad_mode": 3, "sustain_s": 0.80, "k": 4.5}}
+SENS_VALUE = {"high": 0, "balanced": 50, "low": 100}
+SENSITIVITY_K = {k: v["k"] for k, v in SENS_PRESETS.items()}
+VAD_MIN, VAD_MAX = 0.0015, 0.0100    # the server's clamps on its speech threshold
+FLOOR_MIN = 0.0005                    # a noise-gated mic reads ~0; never divide by that
+METER_SPAN = 40.0                     # the meter's right edge = 40 x the room's noise floor
+
+
+def sensitivity_value(v) -> float:
+    """Config value (preset name or 0-100) -> 0-100. Unknown -> balanced."""
+    if isinstance(v, str) and v in SENS_VALUE:
+        return float(SENS_VALUE[v])
+    try:
+        return min(100.0, max(0.0, float(v)))
+    except (TypeError, ValueError):
+        return 50.0
+
+
+def sensitivity_params(v) -> dict:
+    x = sensitivity_value(v)
+    if x <= 50:
+        a, b, t = SENS_PRESETS["high"], SENS_PRESETS["balanced"], x / 50
+    else:
+        a, b, t = SENS_PRESETS["balanced"], SENS_PRESETS["low"], (x - 50) / 50
+    return {"vad_mode": int(round(a["vad_mode"] + (b["vad_mode"] - a["vad_mode"]) * t)),
+            "sustain_s": a["sustain_s"] + (b["sustain_s"] - a["sustain_s"]) * t,
+            "k": a["k"] + (b["k"] - a["k"]) * t}
+
+
+def sensitivity_label(v) -> str:
+    x = sensitivity_value(v)
+    return "High" if x < 25 else "Low" if x > 75 else "Balanced"
 
 
 class LevelTracker:
-    """Rolling noise floor from the live mic level, so the meter shows level RELATIVE to the room —
-    the same thing the server gates on — and not a raw number that means nothing across mics."""
+    """The room's noise floor measured the way the server measures it: the 10th percentile of the
+    last ~9 s of mic levels. The speech line is that floor x k, inside the server's clamps.
 
-    def __init__(self):
-        self.floor = 0.0
+    The first version kept a running floor with no lower bound. A headset with a noise gate sends
+    near-zero between words, the floor sank to 0.00001, and every tiny sound read as 'maxed' —
+    the meter bounced at full with nobody talking (operator, 2026-09-15)."""
+
+    def __init__(self, window: int = 180):
+        from collections import deque
+        self.hist = deque(maxlen=window)
+
+    def floor(self) -> float:
+        if len(self.hist) < 10:
+            return VAD_MIN
+        vals = sorted(self.hist)
+        return max(FLOOR_MIN, vals[int(len(vals) * 0.10)])
+
+    def threshold(self, k: float) -> float:
+        return min(VAD_MAX, max(VAD_MIN, self.floor() * k))
 
     def push(self, rms: float) -> float:
-        rms = max(float(rms), 1e-5)
-        if self.floor <= 0:
-            self.floor = rms
-        elif rms < self.floor:
-            self.floor += (rms - self.floor) * 0.3        # fall fast to a quieter room
-        else:
-            self.floor += (rms - self.floor) * 0.004      # rise slowly: speech must not lift it
-        return rms / self.floor
+        self.hist.append(max(0.0, float(rms)))
+        return float(rms)
 
 
-def meter_pos(ratio: float) -> float:
-    """0..1 position on a log scale (1x floor = 0, METER_SPAN x = 1)."""
-    if ratio <= 1:
+def meter_pos(level: float, floor: float) -> float:
+    """0..1 on a log scale: the floor sits at 0, METER_SPAN x the floor at 1."""
+    floor = max(FLOOR_MIN, floor)
+    if level <= floor:
         return 0.0
-    return min(1.0, math.log(ratio) / math.log(METER_SPAN))
+    return min(1.0, math.log(level / floor) / math.log(METER_SPAN))
 
 
 # ---------------------------------------------------------------- start with Windows

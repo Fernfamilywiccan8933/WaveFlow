@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QHBoxLayout, QLabel, QMessa
                                QVBoxLayout, QWidget)
 
 import setup_logic as S
-from wizard_ui import LevelMeter, Segmented, SkinCard
+from wizard_ui import LevelMeter, SensSlider, SkinCard
 
 SENS_HINTS = {
     "high": "Picks up whispers and quiet rooms. May catch breathing or a fan.",
@@ -73,34 +73,36 @@ class MicPanel(QWidget):
         v.addWidget(self.status)
         v.addSpacing(6)
         v.addWidget(lbl("Mic sensitivity", "lbl"))
-        row = QHBoxLayout()
-        self.sens = Segmented(["High", "Balanced", "Low"])
-        cur_s = cfg.get("mic_sensitivity", "balanced")
-        self.sens.set(S.SENSITIVITIES.index(cur_s) if cur_s in S.SENSITIVITIES else 1)
+        self.sens = SensSlider(S.sensitivity_value(cfg.get("mic_sensitivity", "balanced")))
+        self.sens.setMaximumWidth(420)
         self.sens.changed.connect(self._on_sens)
-        row.addWidget(self.sens)
-        row.addStretch(1)
-        v.addLayout(row)
+        v.addWidget(self.sens)
         self.sens_hint = lbl("", "hint")
         v.addWidget(self.sens_hint)
         v.addWidget(lbl("It still adapts to your room's noise on its own. This sets how far above the noise "
                         "speech must be.", "hint"))
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
-        self._on_sens(self.sens.index(), emit=False)
+        self._on_sens(self.sens.value, emit=False)
 
-    def sensitivity(self) -> str:
-        return S.SENSITIVITIES[max(0, self.sens.index())]
+    def sensitivity(self):
+        """A preset name when the slider sits on a mark (readable config), else the number 0-100."""
+        v = round(self.sens.value)
+        return {0: "high", 50: "balanced", 100: "low"}.get(v, v)
 
     def device_name(self):
         return self.device.currentData()
 
-    def _on_sens(self, i, emit=True):
-        key = S.SENSITIVITIES[max(0, i)]
-        self.meter.set_threshold(S.meter_pos(S.SENSITIVITY_K[key]))
-        self.sens_hint.setText(SENS_HINTS[key])
+    def _on_sens(self, value, emit=True):
+        self.sens_hint.setText(SENS_HINTS[S.sensitivity_label(value).lower()])
+        self._draw_line()
         if emit:
             self.changed.emit()
+
+    def _draw_line(self):
+        k = S.sensitivity_params(self.sens.value)["k"]
+        floor = self.tracker.floor()
+        self.meter.set_threshold(S.meter_pos(self.tracker.threshold(k), floor))
 
     def start(self):
         if self._mic is not None:
@@ -121,7 +123,9 @@ class MicPanel(QWidget):
     def _tick(self):
         if self._mic is None:
             return
-        self.meter.set_level(S.meter_pos(self.tracker.push(self._mic.rms())))
+        level = self.tracker.push(self._mic.rms())
+        self.meter.set_level(S.meter_pos(level, self.tracker.floor()))
+        self._draw_line()                     # the floor moves with the room, so the line does too
 
     def stop(self):
         self._timer.stop()

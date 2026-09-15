@@ -160,6 +160,29 @@ SENSITIVITY = {
     "balanced": {"vad_mode": 1, "sustain_s": 0.60, "k": 3.0},
     "low": {"vad_mode": 3, "sustain_s": 0.80, "k": 4.5},
 }
+
+
+def sensitivity_params(value) -> dict | None:
+    """A preset name, or a number 0-100 from the app's slider: 0 = most sensitive (high),
+    50 = balanced, 100 = least sensitive (low). Between presets it blends the two neighbours.
+    None / unknown = None (server defaults)."""
+    if value is None or value == "":
+        return None
+    if str(value) in SENSITIVITY:
+        return SENSITIVITY[str(value)]
+    try:
+        v = min(100.0, max(0.0, float(value)))
+    except (TypeError, ValueError):
+        return None
+    if v <= 50:
+        a, b, t = SENSITIVITY["high"], SENSITIVITY["balanced"], v / 50
+    else:
+        a, b, t = SENSITIVITY["balanced"], SENSITIVITY["low"], (v - 50) / 50
+    return {"vad_mode": int(round(a["vad_mode"] + (b["vad_mode"] - a["vad_mode"]) * t)),
+            "sustain_s": a["sustain_s"] + (b["sustain_s"] - a["sustain_s"]) * t,
+            "k": a["k"] + (b["k"] - a["k"]) * t}
+
+
 VAD_COLD = 0.0025      # used until the window has enough history to estimate
 VAD_FIXED = 0.0        # >0 forces a fixed RMS threshold (escape hatch: --vad-rms)
 VAD_MODE = 1           # webrtcvad aggressiveness 0..3; LOW = more sensitive to quiet speech
@@ -182,9 +205,16 @@ def _bearer(headers) -> str:
 
 @app.middleware("http")
 async def _require_token(request: Request, call_next):
-    if request.url.path != "/health" and not _token_ok(_bearer(request.headers)):
+    if request.url.path not in ("/", "/health") and not _token_ok(_bearer(request.headers)):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
     return await call_next(request)
+
+
+@app.get("/")
+def root():
+    """A browser opened at the address gets a signpost instead of a bare 404. Nothing secret."""
+    return {"name": "WaveFlow engine", "health": "/health",
+            "note": "The WaveFlow app talks to this address. It has no web page."}
 
 
 @app.get("/health")
@@ -274,7 +304,7 @@ class BurstSession:
         self.max_s, self.gap_s = max_s, gap_s
         # Per-connection mic sensitivity (?sensitivity=high|balanced|low). None = the server's
         # own defaults, so a client that does not send it behaves exactly as before.
-        s = SENSITIVITY.get(sensitivity or "")
+        s = sensitivity_params(sensitivity)
         self.vad_mode = s["vad_mode"] if s else VAD_MODE
         self.sustain_s = s["sustain_s"] if s else SUSTAIN_S
         self.k = s["k"] if s else VAD_K

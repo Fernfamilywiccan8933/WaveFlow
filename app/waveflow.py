@@ -848,6 +848,11 @@ class WaveFlow(QWidget):
         dlg.exec()
         if not dlg.result_cfg:
             log.info("setup closed without saving")
+            if not self.cfg.get("setup_done"):
+                # Nothing is set up, so there is no engine to talk to. Staying in the tray looked
+                # like a working app that could not hear (operator, after uninstall, 2026-09-15).
+                log.info("first-run setup cancelled — closing")
+                QApplication.quit()
             return
         self._apply_cfg(dlg.result_cfg)
         self.tray.showMessage("WaveFlow", "Setup saved — press the hotkey and speak.",
@@ -1035,7 +1040,6 @@ class WaveFlow(QWidget):
             skin_menu.addAction(a)
         m.addAction(f"Last STT: {self.last_ms}ms" if self.last_ms else "Last STT: —").setEnabled(False)
         m.addSeparator()
-        m.addAction("Setup…", self._open_setup)
         m.addAction("Settings…", self._open_settings)
         m.addAction("Hide", self.hide_to_tray)
         m.addAction("Quit", QApplication.quit)
@@ -1085,7 +1089,6 @@ class WaveFlow(QWidget):
         self.tray.setToolTip("WaveFlow")
         menu = QMenu()
         menu.addAction("Show / Dictate", self._summon)
-        menu.addAction("Setup…", self._open_setup)
         menu.addAction("Settings…", self._open_settings)
         menu.addAction("Quit", QApplication.quit)
         self.tray.setContextMenu(menu)
@@ -1312,6 +1315,7 @@ class WaveFlow(QWidget):
 
         self._rx_alive = True
         self._last_burst_t = time.time()
+        self._last_words, self._last_words_t = ("", "", ""), 0.0   # set BEFORE rx starts reading them
 
         def rx():
             """APPEND-ONLY: type each burst's `delta` once, at the caret. Never
@@ -1350,6 +1354,10 @@ class WaveFlow(QWidget):
                     self._rx_alive = False
                     return
                 self._last_burst_t = time.time()
+                words = (m.get("stable", ""), m.get("tail", ""), m.get("delta", ""))
+                if any(w.strip() for w in words) and words != self._last_words:
+                    self._last_words = words
+                    self._last_words_t = time.time()      # the engine heard new words: a real talker
                 if m.get("reset"):
                     self._typed_any = False
                     self._live_typed = ""
@@ -1378,6 +1386,13 @@ class WaveFlow(QWidget):
         last_speech_t = time.time()
         spoke_yet = False
         idle_limit = float(self.cfg.get("silence_commit_s", SILENCE_COMMIT_S))
+        # WHAT COUNTS AS STILL TALKING. It used to be any single 100 ms tick louder than 3x the
+        # floor — so a breath into a headset mic reset the silence timer and the overlay never
+        # closed (operator, GPU run, 2026-09-15). Now it is what the server also calls speech:
+        # a SUSTAINED run over the user's own sensitivity threshold, or new words from the engine.
+        from setup_logic import VAD_MAX, VAD_MIN, sensitivity_params
+        sens = sensitivity_params(self.cfg.get("mic_sensitivity", "balanced"))
+        run_s = 0.0
         # DEBUG RECORDER (--record <dir>). Opened once per SESSION, not per socket:
         # this worker re-enters itself on reconnect, so opening it inside the loop
         # would start a new file mid-sentence and split the evidence in two.
@@ -1397,12 +1412,16 @@ class WaveFlow(QWidget):
                     # Tee EXACTLY the bytes the server saw, so a replay of this
                     # file reproduces the session's transcription bug-for-bug.
                     self._write_recorder(pcm)
-                speaking = self.mic.rms() >= self.mic.speech_thresh()
+                hist = list(self.mic._rms_hist)
+                floor = float(np.percentile(hist, 10)) if len(hist) >= 10 else VAD_MIN / sens["k"]
+                loud = self.mic.rms() >= min(VAD_MAX, max(VAD_MIN, floor * sens["k"]))
+                run_s = run_s + 0.1 if loud else 0.0
+                speaking = run_s >= sens["sustain_s"]
                 now = time.time()
-                if speaking:
-                    last_speech_t = now
+                if speaking or self._last_words_t > last_speech_t:
+                    last_speech_t = max(now if speaking else 0.0, self._last_words_t)
                     spoke_yet = True
-                self.wave.paused = not speaking
+                self.wave.paused = not loud
                 # WATCHDOG: the link can rot without either side raising —
                 # send/recv race on one websocket-client socket, a half-open TCP
                 # connection, a server that stopped replying. The symptom was a

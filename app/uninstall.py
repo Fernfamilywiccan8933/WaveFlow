@@ -99,7 +99,8 @@ def scan(config_path: Path | None = None) -> list[Item]:
              bool(settings) or data.exists()),
         Item("vocab", "Personal vocabulary", "server\\vocab.user.json", sum(size_of(p) for p in vocab),
              False, vocab, bool(vocab)),
-        Item("folder", "The app folder", f"{S.ROOT} — removed after the app closes", 0, False, [S.ROOT], True),
+        # Default ON: without it the code stays and can be started again with nothing set up.
+        Item("folder", "The app folder", f"{S.ROOT} — removed after the app closes", 0, True, [S.ROOT], True),
     ]
     return items
 

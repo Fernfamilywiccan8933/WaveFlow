@@ -45,9 +45,10 @@ with tempfile.TemporaryDirectory() as t:
         items = {i.key: i for i in U.scan(root / "app" / "config.json")}
         check("all six items listed", list(items), ["engine", "models", "docker", "settings", "vocab", "folder"])
         check("models found with size", (items["models"].present, items["models"].size >= 5000), (True, True))
-        check("vocab and folder are NOT default", (items["vocab"].default, items["folder"].default), (False, False))
+        check("vocab NOT default, app folder IS default", (items["vocab"].default, items["folder"].default),
+              (False, True))
         check("docker absent when none of ours", items["docker"].present, False)
-        defaults = {k for k, i in items.items() if i.default}
+        defaults = {k for k, i in items.items() if i.default} - {"folder"}
 
         U.run(list(items.values()), defaults, dry_run=True, log=lambda *_: None)
         check("dry run deletes nothing", (model.exists(), (root / "app" / "config.json").exists()), (True, True))

@@ -215,10 +215,18 @@ class SettingsWindow(QDialog):
         self.conn_pill = lbl("checking…", "statuspill", wrap=False)
         f, v = card("Server", self.conn_pill)
         row(v, "Runs on", "chosen in setup", lbl(S.OPTION_NAMES[self.c.option], "rowt", wrap=False))
-        addr = QLineEdit(self.cfg.get("url", ""))
-        addr.setReadOnly(True)
-        addr.setToolTip("Change where it runs with Run setup again…")
-        row(v, "Address", "", addr, stretch_widget=True)
+        self.addr = QLineEdit(self.cfg.get("url", ""))
+        remote = self.c.option in ("onsite", "vps")
+        self.addr.setReadOnly(not remote)
+        opn = QPushButton("Open")
+        opn.setObjectName("pill")
+        opn.setToolTip("Open the address in your browser. It shows a short status, not a web page.")
+        opn.clicked.connect(self._open_address)
+        ah = row(v, "Address", "", self.addr, stretch_widget=True)
+        ah.addWidget(opn)
+        v.addWidget(lbl("Where the app sends your voice. The engine listens at this address; it has no web page. "
+                        + ("Edit it if your server moved, then Test now and Save." if remote else
+                           "It is set by where the engine runs. To change that, use Run setup again…"), "hint"))
         test = QPushButton("Test now")
         test.clicked.connect(self._run_checks)
         row(v, "Test connection", "4 checks: reach, engine, token, text", test)
@@ -272,9 +280,21 @@ class SettingsWindow(QDialog):
             w.setText(text if w is self.status else ("connected" if ok else "offline"))
             w.setStyleSheet(style)
 
+    def _address(self) -> str:
+        if self.c.option not in ("onsite", "vps"):
+            return self.cfg.get("url", "")
+        port = S.DOCKER_SERVICE.get(self.c.engine, ("", 8756))[1]
+        return S.normalize_url(self.addr.text(), https=self.c.option == "vps", default_port=port) \
+            or self.cfg.get("url", "")
+
+    def _open_address(self):
+        from PySide6.QtCore import QUrl
+        from PySide6.QtGui import QDesktopServices
+        QDesktopServices.openUrl(QUrl(self._address() + "/"))
+
     def _run_checks(self):
         self.check_text.setText("Testing…")
-        url, tok, remote = self.cfg.get("url", ""), self.cfg.get("token", ""), self.c.option != "local"
+        url, tok, remote = self._address(), self.cfg.get("token", ""), self.c.option != "local"
         threading.Thread(target=lambda: self.bus.checks.emit(*S.run_checks(url, tok, require_token=remote)),
                          daemon=True).start()
 
@@ -513,6 +533,7 @@ class SettingsWindow(QDialog):
         out["live_mode"] = self.mode.index() == 0
         out["silence_commit_s"] = round(self.silence.value(), 1)
         out["skin"] = self.skin.value()
+        out["url"] = self._address()
         if self.record.isChecked():
             out["record"] = out.get("record") or str(S.app_data() / "recordings")
         else:

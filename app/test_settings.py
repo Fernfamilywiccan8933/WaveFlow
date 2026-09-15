@@ -56,22 +56,40 @@ check("choices_from_config junk mode -> local", S.choices_from_config({"engine":
 import parakeet_server as P  # noqa: E402
 for k in S.SENSITIVITIES:
     check(f"meter k matches server ({k})", S.SENSITIVITY_K[k], P.SENSITIVITY[k]["k"])
-pos = [S.meter_pos(S.SENSITIVITY_K[k]) for k in S.SENSITIVITIES]
-check("high line left of balanced left of low", pos == sorted(pos) and len(set(pos)) == 3, True)
-check("meter clamps", (S.meter_pos(0.5), S.meter_pos(1e6)), (0.0, 1.0))
+for v in (0, 10, 25, 50, 60, 87.5, 100, "high", "balanced", "low"):
+    a, b = S.sensitivity_params(v), P.sensitivity_params(v)
+    check(f"slider {v}: app blend == server blend",
+          (a["vad_mode"], round(a["sustain_s"], 6), round(a["k"], 6)),
+          (b["vad_mode"], round(b["sustain_s"], 6), round(b["k"], 6)))
+check("server: unknown sensitivity -> defaults", P.sensitivity_params("loud"), None)
+check("slider value from config", [S.sensitivity_value(x) for x in ("high", "low", 30, "junk", 250)],
+      [0.0, 100.0, 30.0, 50.0, 100.0])
+check("clamps", (S.VAD_MIN, S.VAD_MAX), (P.VAD_MIN, P.VAD_MAX))
+check("meter clamps", (S.meter_pos(0.0001, 0.002), S.meter_pos(10, 0.002)), (0.0, 1.0))
 
 t = S.LevelTracker()
-for _ in range(200):
+for _ in range(180):
     t.push(0.002)                       # quiet room
-ratio_speech = max(t.push(0.02) for _ in range(40))   # 2 s of loud speech
-check("speech passes the balanced line", ratio_speech > S.SENSITIVITY_K["balanced"], True)
-check("floor does not climb to the voice", t.floor < 0.005, True)
+for _ in range(40):
+    t.push(0.02)                        # 2 s of loud speech
+check("speech passes the balanced line", 0.02 > t.threshold(3.0), True)
+check("floor does not climb to the voice", t.floor() < 0.003, True)
+check("line moves with the slider", t.threshold(2.0) < t.threshold(3.0) < t.threshold(4.5), True)
+
+# Regression 2026-09-15: a noise-gated headset reads ~0 between words; the old floor sank to 1e-5
+# and every tiny sound showed as a full meter with nobody talking.
+g = S.LevelTracker()
+for _ in range(180):
+    g.push(0.0)
+check("gated mic: floor never below FLOOR_MIN", g.floor() >= S.FLOOR_MIN, True)
+check("gated mic: tiny hiss is NOT near full", S.meter_pos(0.0008, g.floor()) < 0.3, True)
+check("gated mic: hiss stays under the speech line", 0.0008 < g.threshold(3.0), True)
 t2 = S.LevelTracker()
 for _ in range(50):
     t2.push(0.05)
 for _ in range(20):
     t2.push(0.003)
-check("floor falls fast when the room gets quieter", t2.floor < 0.006, True)
+check("floor falls fast when the room gets quieter", t2.floor() < 0.006, True)
 
 # --- Qt: icons + settings collect -----------------------------------------------------------
 from PySide6.QtWidgets import QApplication  # noqa: E402
@@ -101,7 +119,7 @@ cfg = {"url": "http://127.0.0.1:8756", "token": "", "skin": "aurora", "hotkey_sh
 w = settings.SettingsWindow(cfg, None, devices_fn=lambda: ([(1, "Mic A"), (1, "Mic A"), (2, "Mic B")], 1))
 check("duplicate mic names shown once", w.mic.device.count(), 3)
 w.skin.cards[1].setChecked(True)
-w.mic.sens.set(2)
+w.mic.sens.set_value(100)
 w.mode.set(1)
 w.silence.setValue(9.5)
 w.record.setChecked(True)
@@ -110,6 +128,11 @@ w.thr.setValue(4)
 out = w.collect()
 check("settings saves skin", out["skin"], "halo")
 check("settings saves sensitivity", out["mic_sensitivity"], "low")
+w.mic.sens.set_value(97, snap=True)
+check("slider snaps onto a mark", w.mic.sensitivity(), "low")
+w.mic.sens.set_value(62)
+check("slider in between saves a number", w.mic.sensitivity(), 62)
+check("local address is fixed", w.collect()["url"], "http://127.0.0.1:8756")
 check("settings saves burst mode", out["live_mode"], False)
 check("settings saves silence", out["silence_commit_s"], 9.5)
 check("settings saves threads (auto off)", (out["engine"]["threads"], out["engine"]["auto_threads"]), (4, False))

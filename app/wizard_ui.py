@@ -380,6 +380,90 @@ class LevelMeter(QWidget):
         p.drawLine(QPoint(int(x), 1), QPoint(int(x), self.height() - 1))
 
 
+class SensSlider(QWidget):
+    """Drag slider 0-100 with High / Balanced / Low marks (mock settings-icons-v1). Snaps onto a
+    mark when released close to it; arrow keys step by 5."""
+
+    changed = Signal(float)
+    SNAP = 4.0
+
+    def __init__(self, value: float = 50.0, parent=None):
+        super().__init__(parent)
+        self.value = float(value)
+        self._drag = False
+        self.setFixedHeight(46)
+        self.setMinimumWidth(240)
+        self.setFocusPolicy(Qt.StrongFocus)
+        self.setCursor(Qt.PointingHandCursor)
+
+    def _track(self) -> QRectF:
+        return QRectF(11, 12, self.width() - 22, 5)
+
+    def set_value(self, v: float, emit=True, snap=False):
+        v = max(0.0, min(100.0, float(v)))
+        if snap:
+            for mark in (0.0, 50.0, 100.0):
+                if abs(v - mark) <= self.SNAP:
+                    v = mark
+        if v != self.value:
+            self.value = v
+            self.update()
+            if emit:
+                self.changed.emit(v)
+
+    def _from_x(self, x: float) -> float:
+        t = self._track()
+        return (x - t.x()) / t.width() * 100
+
+    def mousePressEvent(self, e):
+        self._drag = True
+        self.set_value(self._from_x(e.position().x()))
+
+    def mouseMoveEvent(self, e):
+        if self._drag:
+            self.set_value(self._from_x(e.position().x()))
+
+    def mouseReleaseEvent(self, e):
+        self._drag = False
+        self.set_value(self._from_x(e.position().x()), snap=True)
+
+    def keyPressEvent(self, e):
+        if e.key() in (Qt.Key_Left, Qt.Key_Down):
+            self.set_value(self.value - 5)
+        elif e.key() in (Qt.Key_Right, Qt.Key_Up):
+            self.set_value(self.value + 5)
+        else:
+            super().keyPressEvent(e)
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        t = self._track()
+        p.fillPath(rounded(t, 2.5), QColor("#262b37"))
+        x = t.x() + t.width() * self.value / 100
+        if x > t.x():
+            p.fillPath(rounded(QRectF(t.x(), t.y(), x - t.x(), t.height()), 2.5), _chroma(t.width()))
+        p.setFont(font(11))
+        for mark, label, align in ((0, "High", Qt.AlignLeft), (50, "Balanced", Qt.AlignHCenter),
+                                   (100, "Low", Qt.AlignRight)):
+            mx = t.x() + t.width() * mark / 100
+            p.setPen(QPen(HAIR, 1))
+            p.drawLine(QPoint(int(mx), int(t.bottom() + 3)), QPoint(int(mx), int(t.bottom() + 7)))
+            near = abs(self.value - mark) < 25 or (mark == 50 and 25 <= self.value <= 75)
+            p.setPen(TX if near else DIM)
+            w = 80
+            box = QRectF(mx - (0 if align == Qt.AlignLeft else w if align == Qt.AlignRight else w / 2) - (11 if mark == 0 else 0)
+                         + (11 if mark == 100 else 0), t.bottom() + 9, w, 16)
+            p.drawText(box, align | Qt.AlignVCenter, label)
+        halo = QColor(SKY)
+        halo.setAlpha(80 if self.hasFocus() or self._drag else 50)
+        p.setPen(Qt.NoPen)
+        p.setBrush(halo)
+        p.drawEllipse(QRectF(x - 13, t.center().y() - 13, 26, 26))
+        p.setBrush(QColor("#ffffff"))
+        p.drawEllipse(QRectF(x - 9, t.center().y() - 9, 18, 18))
+
+
 class Toggle(QAbstractButton):
     """On/off switch (mint→sky when on)."""
 
