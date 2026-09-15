@@ -234,6 +234,20 @@ class UninstallPanel(QWidget):
             lh.addWidget(lbl(self.U.human(it.size) if it.size else "—", "hint", wrap=False))
             self.rows_box.addWidget(line)
             self.checks[it.key] = cb
+        folder, vocab = self.checks.get("folder"), self.checks.get("vocab")
+        if folder is not None and vocab is not None and vocab.isEnabled():
+            # vocab.user.json lives INSIDE the app folder: removing the folder removes it too. Say so,
+            # instead of an unticked box that would be deleted anyway.
+            def couple(on, vocab=vocab):
+                vocab.blockSignals(True)
+                if on:
+                    vocab.setChecked(True)
+                vocab.setEnabled(not on)
+                vocab.setToolTip("Inside the app folder — untick the app folder to keep it." if on else "")
+                vocab.blockSignals(False)
+                self._update_preview()
+            folder.toggled.connect(couple)
+            couple(folder.isChecked())
         cmds = self.U.remote_commands(self.cfg)
         self.remote.setVisible(bool(cmds))
         self.remote.setText("<b style='color:#ffc46b'>Onsite or VPS server?</b> Setup never logs in to your "

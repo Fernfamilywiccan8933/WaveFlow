@@ -38,12 +38,30 @@ with tempfile.TemporaryDirectory() as t:
 
     with mock.patch.object(S, "ROOT", root), mock.patch.object(U.S, "ROOT", root), \
          mock.patch.object(U, "COMPOSE", root / "docker" / "compose.yml"), \
-         mock.patch.object(S, "app_data", lambda: data), mock.patch.dict(os.environ, {"HF_HOME": str(hf)}), \
+         mock.patch.object(S, "app_data", lambda: data), mock.patch.object(S, "models_dir", lambda: hf), \
+         mock.patch.dict(os.environ, {"HF_HOME": str(outside)}), \
          mock.patch.object(U, "_docker_has_ours", lambda: False), \
-         mock.patch.object(U, "schedule_folder_delete", lambda f: scheduled.append(f)):
-        scheduled = []
+         mock.patch.object(U, "schedule_folder_delete", lambda f: scheduled.append(f)), \
+         mock.patch.object(S, "shortcut_paths", lambda: [t / "startmenu" / S.SHORTCUT_NAME,
+                                                          t / "desktop" / S.SHORTCUT_NAME]), \
+         mock.patch.object(S, "autostart_enabled", lambda: autostart[0]), \
+         mock.patch.object(S, "set_autostart", lambda on: autostart.__setitem__(0, on)):
+        scheduled, autostart = [], [False]
+        (root / "app" / "assets").mkdir()
+        # REAL shortcuts (PowerShell + WScript.Shell), written into the temp folders only.
+        check("shortcuts created", S.create_shortcuts(), [])
+        check("both shortcuts exist and point at this copy", len(S.shortcuts_ours()), 2)
+        foreign = t / "desktop" / "Other.lnk"
+        foreign.write_text("not ours")
+        autostart[0] = True
         items = {i.key: i for i in U.scan(root / "app" / "config.json")}
-        check("all six items listed", list(items), ["engine", "models", "docker", "settings", "vocab", "folder"])
+        check("all items listed", list(items),
+              ["engine", "models", "docker", "settings", "shortcuts", "vocab", "folder"])
+        check("shortcuts item found", (items["shortcuts"].present, len(items["shortcuts"].paths)), (True, 2))
+        U.run([items["shortcuts"]], {"shortcuts"}, log=lambda *_: None)
+        check("shortcuts removed, autostart off, other .lnk kept",
+              (len(S.shortcuts_ours()), autostart[0], foreign.exists()), (0, False, True))
+        items = {i.key: i for i in U.scan(root / "app" / "config.json")}
         check("models found with size", (items["models"].present, items["models"].size >= 5000), (True, True))
         check("vocab NOT default, app folder IS default", (items["vocab"].default, items["folder"].default),
               (False, True))

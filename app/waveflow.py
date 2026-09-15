@@ -855,6 +855,12 @@ class WaveFlow(QWidget):
                 QApplication.quit()
             return
         self._apply_cfg(dlg.result_cfg)
+
+        def shortcuts():                     # Start menu + desktop: setup is what installs the app
+            import setup_logic
+            errs = setup_logic.create_shortcuts()
+            log.info("shortcuts: %s", "created" if not errs else "; ".join(errs))
+        threading.Thread(target=shortcuts, daemon=True).start()
         self.tray.showMessage("WaveFlow", "Setup saved — press the hotkey and speak.",
                               QSystemTrayIcon.Information, 2500)
 
@@ -2173,6 +2179,14 @@ def main() -> int:
         print(f"caret_rect_uia() -> {rect}  [{'CARET OK' if ok else 'fallback/none'}]")
         log.info("caret-test frozen=%s -> %s", getattr(sys, "frozen", False), rect)
         return 0 if ok else 1
+
+    if len(sys.argv) == 1:
+        import setup_logic
+        if setup_logic.console_launch() and setup_logic.relaunch_detached():
+            # Started from a terminal: the app now runs on its own (pythonw), so closing the
+            # terminal no longer closes WaveFlow. Flags (--demo, --replay …) keep the console.
+            print("WaveFlow is starting in the background. You can close this window.")
+            return 0
 
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)

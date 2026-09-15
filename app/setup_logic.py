@@ -414,12 +414,113 @@ RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 RUN_NAME = "WaveFlow"
 
 
-def autostart_command() -> str:
+def launch_parts() -> tuple[str, str]:
+    """(program, arguments) that start the app with NO console window: the .exe itself, or the
+    venv's pythonw.exe running waveflow.py. A console launch dies when its window is closed."""
     if getattr(sys, "frozen", False):
-        return f'"{sys.executable}"'
+        return sys.executable, ""
     exe = Path(sys.executable)
     pyw = exe.with_name("pythonw.exe")
-    return f'"{pyw if pyw.exists() else exe}" "{ROOT / "app" / "waveflow.py"}"'
+    return str(pyw if pyw.exists() else exe), f'"{ROOT / "app" / "waveflow.py"}"'
+
+
+def autostart_command() -> str:
+    prog, args = launch_parts()
+    return f'"{prog}" {args}'.strip()
+
+
+def console_launch() -> bool:
+    """True when started as `python.exe waveflow.py` from a terminal (not the .exe, not pythonw)."""
+    return (sys.platform == "win32" and not getattr(sys, "frozen", False)
+            and Path(sys.executable).name.lower() == "python.exe")
+
+
+def relaunch_detached() -> bool:
+    """Start the same app under pythonw, outside this terminal, so closing the terminal does not
+    close WaveFlow (operator, 2026-09-15). Returns False if it could not, so the caller keeps
+    running here instead."""
+    prog, _ = launch_parts()
+    if Path(prog).name.lower() != "pythonw.exe":
+        return False
+    cmd = [prog, str(ROOT / "app" / "waveflow.py")]
+    base = subprocess.CREATE_NEW_PROCESS_GROUP | getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    for flags in (base | 0x01000000, base):          # CREATE_BREAKAWAY_FROM_JOB, then without
+        try:
+            subprocess.Popen(cmd, creationflags=flags, cwd=str(ROOT), close_fds=True)
+            return True
+        except OSError:
+            continue
+    return False
+
+
+# ---------------------------------------------------------------- shortcuts (Start menu + desktop)
+SHORTCUT_NAME = "WaveFlow.lnk"
+
+
+def shortcut_paths() -> list[Path]:
+    """This user's own Start menu and desktop. Nothing machine-wide, no admin rights."""
+    out = []
+    appdata = os.environ.get("APPDATA")
+    if appdata:
+        out.append(Path(appdata) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / SHORTCUT_NAME)
+    try:
+        import ctypes.wintypes
+        buf = ctypes.create_unicode_buffer(260)
+        ctypes.windll.shell32.SHGetFolderPathW(None, 0x0010, None, 0, buf)   # CSIDL_DESKTOPDIRECTORY
+        if buf.value:
+            out.append(Path(buf.value) / SHORTCUT_NAME)
+    except Exception:
+        home = Path.home() / "Desktop"
+        if home.exists():
+            out.append(home / SHORTCUT_NAME)
+    return out
+
+
+def _ps_quote(s: str) -> str:
+    return "'" + str(s).replace("'", "''") + "'"
+
+
+def create_shortcuts() -> list[str]:
+    """Create/refresh the Start menu and desktop shortcuts. Returns error lines."""
+    if sys.platform != "win32":
+        return []
+    prog, args = launch_parts()
+    icon = ROOT / "app" / "assets" / "waveflow.ico"
+    errors = []
+    for lnk in shortcut_paths():
+        ps = ("$s = (New-Object -ComObject WScript.Shell).CreateShortcut(" + _ps_quote(lnk) + "); "
+              "$s.TargetPath = " + _ps_quote(prog) + "; $s.Arguments = " + _ps_quote(args) + "; "
+              "$s.WorkingDirectory = " + _ps_quote(ROOT) + "; $s.IconLocation = " + _ps_quote(icon) + "; "
+              "$s.Description = 'WaveFlow dictation'; $s.Save()")
+        try:
+            lnk.parent.mkdir(parents=True, exist_ok=True)
+            r = subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True, text=True,
+                               timeout=30, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            if r.returncode != 0 or not lnk.exists():
+                errors.append(f"{lnk}: {(r.stderr or r.stdout).strip()[-160:]}")
+        except Exception as e:
+            errors.append(f"{lnk}: {e}")
+    return errors
+
+
+def shortcuts_ours() -> list[Path]:
+    """Existing shortcuts that point at THIS copy (another copy's shortcut is left alone)."""
+    out = []
+    target = str(ROOT).lower()
+    for lnk in shortcut_paths():
+        if not lnk.exists():
+            continue
+        try:
+            r = subprocess.run(["powershell", "-NoProfile", "-Command",
+                                "$s = (New-Object -ComObject WScript.Shell).CreateShortcut(" + _ps_quote(lnk) + "); "
+                                "$s.TargetPath + '|' + $s.Arguments + '|' + $s.WorkingDirectory"],
+                               capture_output=True, text=True, timeout=30,
+                               creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            if target in r.stdout.lower():
+                out.append(lnk)
+        except Exception:
+            pass
+    return out
 
 
 def autostart_enabled() -> bool:
