@@ -23,7 +23,26 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlparse
 
-ROOT = Path(__file__).resolve().parent.parent
+# The WaveFlow folder. In the one-file .exe, __file__ points INTO PyInstaller's unpack folder under
+# %TEMP%, so parent.parent was the user's whole Temp folder — and Uninstall's "The app folder" (ticked
+# by default) would have deleted it. Frozen: the folder holding the .exe. (Found 2026-09-15, pre-build.)
+FROZEN = bool(getattr(sys, "frozen", False))
+ROOT = Path(sys.executable).resolve().parent if FROZEN else Path(__file__).resolve().parent.parent
+APP_DIR = ROOT if FROZEN else ROOT / "app"          # where config.json and waveflow.log live
+
+
+def app_dir() -> Path:
+    """APP_DIR computed from the CURRENT ROOT (tests and tools may point ROOT elsewhere)."""
+    return ROOT if FROZEN else ROOT / "app"
+
+
+def is_app_folder(p: Path) -> bool:
+    """True only for a folder that is really WaveFlow's: the source checkout, or a folder holding a
+    WaveFlow*.exe. Uninstall never schedules any other folder for deletion."""
+    p = Path(p)
+    if not p.is_dir() or p.parent == p or len(p.parts) <= 1:
+        return False
+    return (p / "app" / "waveflow.py").is_file() or any(p.glob("WaveFlow*.exe"))
 SAMPLE_WAV = Path(__file__).resolve().parent / "assets" / "sample.wav"
 SAMPLE_TEXT = "send it"
 
@@ -485,7 +504,7 @@ def create_shortcuts() -> list[str]:
     if sys.platform != "win32":
         return []
     prog, args = launch_parts()
-    icon = ROOT / "app" / "assets" / "waveflow.ico"
+    icon = Path(sys.executable) if FROZEN else ROOT / "app" / "assets" / "waveflow.ico"   # the .exe carries it
     errors = []
     for lnk in shortcut_paths():
         ps = ("$s = (New-Object -ComObject WScript.Shell).CreateShortcut(" + _ps_quote(lnk) + "); "

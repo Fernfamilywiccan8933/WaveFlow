@@ -112,6 +112,30 @@ with tempfile.TemporaryDirectory() as t:
         U.run([U.Item("folder", "x", "x", default=False, paths=[root])], {"folder"}, log=lambda *_: None)
         check("folder delete is scheduled, not immediate", (scheduled == [root], root.exists()), (True, True))
 
+# --- REGRESSION (2026-09-15, before the first exe build): frozen folder = the .exe's folder, NOT %TEMP% ---
+# In a one-file PyInstaller exe __file__ lives in %TEMP%\_MEIxxxx, so ROOT was the whole Temp folder and
+# Uninstall's default-on "The app folder" would have deleted it.
+import importlib  # noqa: E402
+
+with tempfile.TemporaryDirectory() as t:
+    t = Path(t)
+    exe_dir, meipass = t / "MyApps" / "WaveFlow", t / "Temp" / "_MEI12345"
+    exe_dir.mkdir(parents=True)
+    meipass.mkdir(parents=True)
+    (exe_dir / "WaveFlow.exe").write_bytes(b"MZ")
+    with mock.patch.object(sys, "frozen", True, create=True), \
+         mock.patch.object(sys, "executable", str(exe_dir / "WaveFlow.exe")):
+        F = importlib.reload(S)
+        check("frozen ROOT = the exe's folder", (F.ROOT, F.APP_DIR), (exe_dir.resolve(), exe_dir.resolve()))
+    importlib.reload(S)                                        # back to the source layout for the rest
+    check("exe folder counts as ours", S.is_app_folder(exe_dir), True)
+    check("Temp / unpack folders never count as ours", (S.is_app_folder(t / "Temp"), S.is_app_folder(meipass)),
+          (False, False))
+    check("a drive root never counts as ours", S.is_app_folder(Path(t.anchor)), False)
+    with mock.patch.object(U.subprocess, "Popen") as popen:
+        U.schedule_folder_delete(t / "Temp")
+    check("folder delete refuses a folder that is not ours", popen.called, False)
+
 check("vps remote commands", U.remote_commands({"engine": {"mode": "vps"}})[0].startswith("docker compose -f docker/compose.vps.yml down"), True)
 check("local has no remote commands", U.remote_commands({"engine": {"mode": "local"}}), [])
 check("docker down removes our named images + volumes", U.docker_down_cmd()[-3:], ["--rmi", "all", "-v"])

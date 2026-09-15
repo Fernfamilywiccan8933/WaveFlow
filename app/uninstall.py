@@ -104,11 +104,11 @@ def _docker_has_ours() -> bool:
 
 
 def scan(config_path: Path | None = None) -> list[Item]:
-    config_path = config_path or (S.ROOT / "app" / "config.json")
+    config_path = config_path or (S.app_dir() / "config.json")
     data = S.app_data()
     models = [hf_hub() / r for r in MODEL_REPOS if (hf_hub() / r).exists()]
     settings = [p for p in (config_path, data / "docker.env", data / "engine.log",
-                            S.ROOT / "app" / "waveflow.log") if p.exists()]
+                            S.app_dir() / "waveflow.log") if p.exists()]
     vocab = [p for p in (S.ROOT / "server" / "vocab.user.json",) if p.exists()]
     shortcuts = S.shortcuts_ours()
     try:
@@ -135,7 +135,8 @@ def scan(config_path: Path | None = None) -> list[Item]:
         Item("vocab", "Personal vocabulary", "server\\vocab.user.json", sum(size_of(p) for p in vocab),
              False, vocab, bool(vocab)),
         # Default ON: without it the code stays and can be started again with nothing set up.
-        Item("folder", "The app folder", f"{S.ROOT} — removed after the app closes", 0, True, [S.ROOT], True),
+        Item("folder", "The app folder", f"{S.ROOT} — removed after the app closes", 0, True, [S.ROOT],
+             S.is_app_folder(S.ROOT)),
     ]
     return items
 
@@ -325,6 +326,8 @@ def schedule_folder_delete(folder: Path):
     """The running app lives in this folder, so it cannot delete itself. A detached shell waits
     for the app to exit, then removes the folder."""
     folder = folder.resolve()
+    if not S.is_app_folder(folder):          # last line of defence: never a folder that is not ours
+        return
     if os.name == "nt":
         q = str(folder).replace("'", "''")          # PowerShell single-quote escape
         # Wait for THIS process to really exit (its python.exe lives in the folder's venv and stays
