@@ -78,15 +78,62 @@ class LocalEngine:
 
     def stop(self):
         if self.running():
-            self.proc.terminate()
+            # A venv's python.exe is a LAUNCHER with the real interpreter as its child: kill the tree.
+            kill_tree(self.proc.pid)
             try:
                 self.proc.wait(timeout=8)
             except subprocess.TimeoutExpired:
                 self.proc.kill()
         self.proc = None
+        # start() ADOPTS an engine that already answers (e.g. one from before an app restart) without
+        # owning its process, so stop() could not end it: it kept port 8756 and locked the folder,
+        # and uninstall left files behind (operator, 2026-09-15). End every engine of THIS copy.
+        stop_all_engines()
         if self._logf is not None:          # an open handle blocks deleting engine.log on Windows
             self._logf.close()
             self._logf = None
+
+
+NOWINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+
+def kill_tree(pid: int):
+    """Kill a process and every child it started."""
+    if os.name == "nt":
+        subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True, creationflags=NOWINDOW)
+    else:
+        try:
+            os.killpg(os.getpgid(pid), 15)
+        except Exception:
+            pass
+
+
+def engine_pids(root: Path | None = None) -> list[int]:
+    """PIDs of engines started from THIS copy (command line runs <root>/server/parakeet_server.py),
+    including ones an earlier app run left behind. Another copy's engine is never matched."""
+    if os.name != "nt":
+        return []
+    script = str((root or S.ROOT) / "server" / "parakeet_server.py").lower()
+    ps = ("Get-CimInstance Win32_Process -Filter \"Name like 'python%'\" | "
+          "ForEach-Object { \"$($_.ProcessId)|$($_.CommandLine)\" }")
+    try:
+        r = subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True, text=True,
+                           timeout=30, creationflags=NOWINDOW)
+    except Exception:
+        return []
+    out = []
+    for line in r.stdout.splitlines():
+        pid, _, cmd = line.partition("|")
+        if pid.strip().isdigit() and script in cmd.lower() and int(pid) != os.getpid():
+            out.append(int(pid))
+    return out
+
+
+def stop_all_engines(root: Path | None = None) -> int:
+    pids = engine_pids(root)
+    for pid in pids:
+        kill_tree(pid)
+    return len(pids)
 
 
 def _health(url: str) -> bool:

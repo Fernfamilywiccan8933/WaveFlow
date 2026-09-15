@@ -181,6 +181,11 @@ def run(items: list[Item], chosen: set[str], engine=None, dry_run=False, log=pri
     if not dry_run:
         if engine is not None:
             engine.stop()
+        if chosen & {"engine", "models", "settings", "folder"}:
+            from local_engine import stop_all_engines
+            stopped = stop_all_engines()      # also engines an earlier run left behind
+            if stopped:
+                log(f"stopped {stopped} engine process(es) left running from this folder")
         if chosen & {"settings", "folder"}:
             release_logs()
     for it in items:
