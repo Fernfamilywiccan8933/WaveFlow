@@ -71,10 +71,17 @@ except Exception as _e:
           f"three times. Install webrtcvad in the image. ***", flush=True)
 
 
+# Parakeet emits a currency sign glued to the word before it: "The order total is$47.95". Glued,
+# "is$47.95" is one word, so a live commit of "is" never matched it again — the pass held and the
+# final skipped the whole word, price included (5-min CPU replay, 2026-09-15: 5 of 10 lost).
+_GLUED_CURRENCY = re.compile(r"(?<=[A-Za-z])(?=[$€£¥]\d)")
+_ENDS_IN_DIGIT = re.compile(r"\d[.,:;!?%]*$")
+
+
 def polish(text: str) -> str:
     """The full post-STT text pass, in order. Both consumers and both endpoints use THIS —
     so batch and streaming can never drift apart. Idempotent end to end."""
-    return apply_vocab(apply_itn(text))
+    return apply_vocab(apply_itn(_GLUED_CURRENCY.sub(" ", text or "")))
 
 app = FastAPI(title="waveflow-parakeet-stt")
 model = None
@@ -681,6 +688,12 @@ class LiveSession(BurstSession):
         # it. Comparing whole hypotheses instead stalled 27 of 30 passes on real audio: the
         # commit froze at two words for a 22s utterance and the rest piled into the tail.
         agreed = _agree_words(rest, prev_rest)
+        # A NUMBER is never the last word settled: it can still grow while the speaker goes on
+        # ("$47" -> "$47.95", "3" -> "3:30", "12" -> "1,200"). Committing "$47" typed it, then the
+        # grown "$47.95" no longer matched and the cents were lost (5-min CPU replay, 2026-09-15).
+        # It settles as soon as a word AFTER it agrees too.
+        while agreed and _ENDS_IN_DIGIT.search(rest[agreed - 1]):
+            agreed -= 1
         if agreed:
             # APPEND ONLY — words already committed keep the exact text they were typed with.
             self._stable_words = self._stable_words + rest[:agreed]
@@ -745,16 +758,26 @@ class LiveSession(BurstSession):
         # found. Only the END must fall on a word boundary — that is the resume point. A
         # first cut also demanded a boundary at the START, and the anchor's first word is
         # exactly the one most likely to have merged with its neighbour ("right" inside
-        # "Alright"), so the match was rejected and printing stalled again. Search backwards:
-        # the buffer grows forward, so the LATEST occurrence is the join when a phrase repeats.
+        # "Alright"), so the match was rejected and printing stalled again.
+        #
+        # WHICH occurrence: the one whose end sits nearest the commit point (the number of words
+        # committed). It used to take the LAST occurrence. That breaks on a short commit: with
+        # only "The" settled, "...over the lazy dog near THE riverbank" matched the last "the",
+        # everything before it counted as typed, and the sentence came out "The riverbank."
+        # (5-min CPU replay, 2026-09-15). The commit point also picks the right repeat of a
+        # repeated phrase, which is what LAST was for. Ties go to the later occurrence.
         ends = set(eh)
+        expected = len(self._stable_words if words is None else words)
+        best = None
         at = sh.rfind(anchor)
         while at != -1:
             end = at + len(anchor)
             if end in ends:
-                return sum(1 for e in eh if e <= end)
+                idx = sum(1 for e in eh if e <= end)
+                if best is None or abs(idx - expected) < abs(best - expected):
+                    best = idx
             at = sh.rfind(anchor, 0, end - 1)
-        return None
+        return best
 
     def finish(self, text: str):
         """Close the utterance. Committed words are kept verbatim; only the tail is new.

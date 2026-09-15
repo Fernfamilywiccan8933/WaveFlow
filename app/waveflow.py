@@ -880,6 +880,11 @@ class WaveFlow(QWidget):
         if old_engine.get("mode") == "local" and (new_engine.get("mode") != "local" or any(
                 old_engine.get(k) != new_engine.get(k) for k in ("engine", "threads", "device"))):
             self.engine.stop()                      # moved off this PC, or changed: restart below
+            if new_engine.get("mode") == "local":
+                # measured 2026-09-15: ~5 s with the model cached. Say so, or dictation just goes quiet.
+                self.tray.showMessage("WaveFlow", f"Restarting the engine ({new_engine.get('engine')}, "
+                                      f"{new_engine.get('threads')} threads) — about 5 seconds.",
+                                      QSystemTrayIcon.Information, 4000)
         self._start_local_engine()
         log.info("config applied: mode=%s engine=%s url=%s sens=%s", new_engine.get("mode"),
                  new_engine.get("engine"), self.url, self.cfg.get("mic_sensitivity", "balanced"))

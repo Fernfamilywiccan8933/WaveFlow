@@ -347,6 +347,42 @@ for name, want in (("high", True), ("balanced", False), ("low", False)):   # a 0
     s._frames = lambda: np.asarray([False] * 10 + [True] * 17 + [False] * 13, dtype=bool)
     check(f"0.5s speech with {name}", s.flush() is not None, want)
 
+# --- 15. REGRESSION (2026-09-15, 5-min CPU replay): a SHORT commit anchors to the WRONG repeat ----
+# Only "The" had settled. The anchor search took the LAST "the" in each new pass, so everything
+# before it counted as already typed: live tails read "water.", "lazy dog.", "river." and the
+# final typed "The riverbank." — "quick brown fox jumps over the lazy dog near the" was lost.
+# Exact message sequence from tools/stream_probe.py against a 4-thread CPU engine.
+s = new()
+s.settle("The")
+check("short commit: first word settles", s.settle("The quick brown fog")[0], "The")
+st, tail = s.settle("The quick brown fox jumps over the water.")
+check("short commit: live text keeps the middle of the sentence", " ".join((st + " " + tail).split()),
+      "The quick brown fox jumps over the water.")
+st, tail = s.finish("The quick brown fox jumps over the lazy dog near the riverbank.")
+check("short commit: final keeps the whole sentence", " ".join((st + " " + tail).split()),
+      "The quick brown fox jumps over the lazy dog near the riverbank.")
+# why LAST-occurrence existed must still hold: a phrase that repeats later is not the join
+s = new()
+s.settle("so I said go")
+s.settle("so I said go and then")
+st, tail = s.settle("so I said go and then I said go again")
+check("repeated phrase: join stays at the commit point", " ".join((st + " " + tail).split()),
+      "so I said go and then I said go again")
+
+# --- 16. REGRESSION (2026-09-15): the model glues a currency sign to the previous word ------------
+# Real ONNX output: "The order total is$47.95 for 12 items." — with "is" committed, the glued word
+# never matched and the final dropped "$47.95". polish() splits it, and polish is idempotent.
+check("glued currency split", P.polish("The order total is$47.95 for 12 items."),
+      "The order total is $47.95 for 12 items.")
+check("polish idempotent on it", P.polish(P.polish("is$47.95")), "is $47.95")
+check("normal prices untouched", (P.polish("costs $5"), P.polish("US$5 fee")), ("costs $5", "US $5 fee"))
+s = new()
+s.settle(P.polish("The order total"))
+s.settle(P.polish("The order total is 47."))
+s.settle(P.polish("The order total is$47"))
+st, tail = s.finish(P.polish("The order total is$47.95 for 12 items."))
+check("price survives a live utterance", " ".join((st + " " + tail).split()), "The order total is $47.95 for 12 items.")
+
 if FAILS:
     print("LIVE_SETTLE_FAIL\n" + "\n".join(FAILS))
     raise SystemExit(1)
