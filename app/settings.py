@@ -240,7 +240,18 @@ class SettingsWindow(QDialog):
         if self.c.option == "local":
             v.addWidget(lbl("This PC mode listens only on this PC, so it needs no token.", "hint"))
         else:
-            tr = QHBoxLayout()
+            has_token = bool(self.cfg.get("token"))
+            if not has_token:
+                # An empty masked box read as "the token is missing / broken" (operator, 2026-09-15). A
+                # server without a token is a real setup (his home server also serves another tokenless
+                # client), so say what it means instead.
+                v.addWidget(lbl("<b style='color:#ffc46b'>This server has no token.</b> Anyone who can reach "
+                                "it on your network can use it. Fine on a private home network; add a token "
+                                "if other people or devices share that network.", "warnbox"))
+            tok_row = QWidget()
+            tr = QHBoxLayout(tok_row)
+            tr.setContentsMargins(0, 0, 0, 0)
+            tok_row.setVisible(has_token)
             self.tok = QLineEdit(self.cfg.get("token", ""))
             self.tok.setReadOnly(True)
             self.tok.setEchoMode(QLineEdit.Password)
@@ -254,10 +265,15 @@ class SettingsWindow(QDialog):
             copy.clicked.connect(lambda: QGuiApplication.clipboard().setText(self.cfg.get("token", "")))
             tr.addWidget(show)
             tr.addWidget(copy)
-            v.addLayout(tr)
-            self.rotate_btn = QPushButton("Rotate…")
+            v.addWidget(tok_row)
+            self.tok_row = tok_row
+            self.rotate_btn = QPushButton("Rotate…" if has_token else "Add a token…")
             self.rotate_btn.clicked.connect(self._rotate)
-            row(v, "Rotate token", "makes a new token; the old one stops working", self.rotate_btn)
+            if has_token:
+                row(v, "Rotate token", "makes a new token; the old one stops working", self.rotate_btn)
+            else:
+                row(v, "Add a token", "every app that uses this server will then need the same token",
+                    self.rotate_btn)
             self.rotate_msg = lbl("", "hint")
             v.addWidget(self.rotate_msg)
             v.addWidget(lbl("<b style='color:#e9ecf3'>Docker on this PC:</b> Rotate writes the new token and "
@@ -369,6 +385,7 @@ class SettingsWindow(QDialog):
             return
         self.cfg["token"] = new
         self.tok.setText(new)
+        self.tok_row.setVisible(True)
         self.apply_now({"token": new})       # the server already changed: never leave the app on the old one
         self._run_checks()
 
