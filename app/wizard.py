@@ -431,7 +431,8 @@ class SetupWizard(QDialog):
                 b.clicked.connect(fn)
             trow.addWidget(b)
         tl.addLayout(trow)
-        tl.addWidget(_lbl("Made for you. Use the same token on the server.", "hint"))
+        self.tok_hint = _lbl("", "hint")
+        tl.addWidget(self.tok_hint)
         v.addWidget(self.tok_box)
 
         # Remote install checklist: replaces the engine picker while installing.
@@ -567,6 +568,12 @@ class SetupWizard(QDialog):
                               if c.option in ("local", "docker") else
                               "Set to the server's physical performance cores.")
         remote = self._remote_install_mode()
+        self.tok_hint.setText(
+            "Made for you. Install puts it on the server for you, and it is saved in Settings → Connection "
+            "(Show / Copy) for reinstalling or reconnecting." if remote else
+            "Made for you and saved in Settings → Connection. Put the same token in the server's "
+            "WAVEFLOW_TOKEN (see the right side)." if c.option in ("onsite", "vps") else
+            "Made for you. Setup writes it into Docker's settings and saves it in Settings → Connection.")
         self.ssh_box.setVisible(remote)
         self.cmds_only.setVisible(remote)
         errs = S.validate(c)
@@ -582,8 +589,8 @@ class SetupWizard(QDialog):
             self.cfg_primary.setText(f"Install on {RI.host_of(c.address) or 'server'}")
         else:
             self.cfg_primary.setText({"local": "Start engine", "docker": "Build & start"}.get(c.option, "Continue"))
-        if self._busy and remote:
-            return                      # the live log owns the preview while installing
+        if self._install_view:
+            return                      # the live log owns the preview during AND after an install attempt
         self.cfg_preview.setHtml(self._preview_html(S.build_plan(c) if not errs or c.option == "local" else None, errs))
 
     def _preview_html(self, plan, errs):

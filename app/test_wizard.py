@@ -179,6 +179,13 @@ cmd = RI.compose_command(S.build_plan(c))
 check("compose reads the written .env", ("--env-file docker/.env" in cmd, "waveflow-onnx-gpu" in cmd),
       (True, True))
 check("token never on a command line", "t" * 20 in cmd, False)
+check("build log streams without a terminal", "--progress plain" in cmd, True)
+# Operator's real run 2026-09-15: an apt Docker upgrade restarted dockerd mid-build.
+check("daemon restart mid-build -> plain 'try again'",
+      "Try again" in RI.explain_build_failure(
+          ["failed to receive status: rpc error: code = Unavailable desc = error reading from server: EOF"]), True)
+check("disk full explained", "disk" in RI.explain_build_failure(["write /x: no space left on device"]), True)
+check("step names fit next to their detail", max(len(s) for s in RI.STEPS) <= 27, True)
 
 
 def fake_probe(stdout, rc=0, stderr=""):

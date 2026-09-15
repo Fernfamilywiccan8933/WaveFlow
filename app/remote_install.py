@@ -20,8 +20,8 @@ from urllib.parse import urlparse
 
 import setup_logic as S
 
-STEPS = ["Connect over SSH", "Check Docker and GPU", "Copy server files", "Write .env with the token",
-         "Build and start the container", "Wait for the engine"]
+STEPS = ["Connect over SSH", "Check Docker and GPU", "Copy server files", "Put the token on the server",
+         "Build and start", "Wait for the engine"]
 NOWINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 SAFE_FOLDER = re.compile(r"^~?[A-Za-z0-9_./-]+$")
 SAFE_USER = re.compile(r"^[A-Za-z0-9_.-]+$")
@@ -148,7 +148,22 @@ def server_tar() -> bytes:
 
 def compose_command(plan: S.Plan) -> str:
     """The plan's compose command, told where the .env is (the wizard writes it next to the compose file)."""
-    return plan.commands[0].replace("docker compose ", "docker compose --env-file docker/.env ", 1)
+    # --progress plain: without a terminal, BuildKit's fancy progress prints nothing until the very end, so
+    # a 10-minute NeMo build showed an empty log and looked hung (operator, 2026-09-15).
+    return plan.commands[0].replace("docker compose ", "docker compose --progress plain --env-file docker/.env ", 1)
+
+
+def explain_build_failure(tail: list[str]) -> str:
+    text = " ".join(tail).lower()
+    if "error reading from server: eof" in text or "cannot connect to the docker daemon" in text \
+            or "rpc error: code = unavailable" in text:
+        return ("Docker on the server restarted during the build (for example a Docker update). "
+                "Nothing is broken — press Try again.")
+    if "no space left" in text:
+        return "The server ran out of disk space during the build."
+    if "port is already allocated" in text or "address already in use" in text:
+        return "The engine's port is already used on the server by another container or program."
+    return "The container did not start: " + (tail[-1] if tail else "see the log")
 
 
 def install(c: S.Choices, user: str, folder: str, emit, wait_s: float = 1800) -> tuple[bool, str]:
@@ -213,8 +228,9 @@ def install(c: S.Choices, user: str, folder: str, emit, wait_s: float = 1800) ->
             tail = (tail + [line])[-5:]
             emit("log", line[-160:])
     if proc.wait() != 0:
-        msg = "The container did not start: " + (tail[-1] if tail else "see the log")
-        step(4, False, msg[-160:])
+        msg = explain_build_failure(tail)
+        emit("log", msg)
+        step(4, False, msg)
         return False, msg
     step(4, True, "container started")
 
