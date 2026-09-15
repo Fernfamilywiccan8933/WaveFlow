@@ -152,6 +152,52 @@ for args in [(raise_(requests.exceptions.ConnectionError()),), (raise_(requests.
 check("5 failures -> 5 distinct messages", len(messages), 5)
 check("sample clip is bundled", S.SAMPLE_WAV.exists(), True)
 
+# --- remote install over SSH (mock wizard-onsite-ssh-v1 A) ----------------------------------
+import io  # noqa: E402
+import tarfile  # noqa: E402
+
+import remote_install as RI  # noqa: E402
+
+check("host from address", [RI.host_of(a) for a in ("gpu-box", "gpu-box:8759", "http://10.0.0.5:8756",
+                                                     "https://stt.example.com")],
+      ["gpu-box", "gpu-box", "10.0.0.5", "stt.example.com"])
+check("ssh never prompts for a password", "BatchMode=yes" in RI.ssh_cmd("u", "h", "true"), True)
+check("target validation", (RI.validate_target("bob", "gpu-box", "~/waveflow"),
+                            bool(RI.validate_target("bob; rm", "gpu-box", "~/wf")),
+                            bool(RI.validate_target("bob", "gpu-box", "~/wf && rm -rf /")),
+                            bool(RI.validate_target("bob", "gpu-box", "../etc"))), ([], True, True, True))
+check("ssh key rejected -> key help", (RI.classify_ssh_error("bob@h: Permission denied (publickey).")[0],
+                                      RI.key_help("bob", "gpu-box")[1]), ("auth", "ssh-copy-id bob@gpu-box"))
+check("ssh unreachable", RI.classify_ssh_error("ssh: connect to host h port 22: Connection timed out")[0],
+      "unreachable")
+names = tarfile.open(fileobj=io.BytesIO(RI.server_tar()), mode="r:gz").getnames()
+check("ships server + docker", ("server/parakeet_server.py" in names, "docker/compose.yml" in names), (True, True))
+check("never ships personal vocab, .env or caches",
+      [n for n in names if n.endswith(("vocab.user.json", "/.env", ".pyc")) or "__pycache__" in n], [])
+c = S.Choices(option="onsite", engine="onnx-gpu", method="docker", address="gpu-box", token="t" * 20)
+cmd = RI.compose_command(S.build_plan(c))
+check("compose reads the written .env", ("--env-file docker/.env" in cmd, "waveflow-onnx-gpu" in cmd),
+      (True, True))
+check("token never on a command line", "t" * 20 in cmd, False)
+
+
+def fake_probe(stdout, rc=0, stderr=""):
+    res = mock.Mock(returncode=rc, stdout=stdout.encode(), stderr=stderr.encode())
+    with mock.patch.object(RI, "_ssh", lambda *a, **k: res):
+        return RI.probe("bob", "gpu-box", "onnx-gpu")
+
+
+good = "DOCKER=27.3.1\nRUNTIMES=/usr/bin/nvidia-ctkio.containerd.runc.v2 runc\nGPUS=GTX 1080;GTX 1060\nFREE_KB=53000000\n"
+check("probe ok (CDI toolkit, no nvidia runtime entry)", (fake_probe(good).ok, fake_probe(good).gpus),
+      (True, ["GTX 1080", "GTX 1060"]))
+check("probe ok (legacy nvidia runtime)", fake_probe(good.replace("/usr/bin/nvidia-ctk", "nvidia ")).ok, True)
+check("probe: key rejected", fake_probe("", 255, "Permission denied (publickey)").kind, "auth")
+check("probe: docker group", fake_probe(good.replace("27.3.1", "permission denied while trying to connect")).kind,
+      "docker-permission")
+check("probe: no gpu", fake_probe(good.replace("GTX 1080;GTX 1060", "")).kind, "no-gpu")
+check("probe: no toolkit", fake_probe(good.replace("/usr/bin/nvidia-ctk", "")).kind, "no-gpu")
+check("probe: disk", fake_probe(good.replace("53000000", "2000000")).kind, "disk")
+
 if FAILS:
     print("WIZARD_FAIL\n" + "\n".join(FAILS))
     raise SystemExit(1)

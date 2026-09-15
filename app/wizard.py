@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (QCheckBox, QDialog, QFrame, QGridLayout, QHBoxLay
                                QKeySequenceEdit, QLabel, QLineEdit, QMessageBox,
                                QPushButton, QSpinBox, QStackedWidget, QTextEdit, QVBoxLayout, QWidget)
 
+import remote_install as RI
 import setup_logic as S
 from panels import MicPanel, SkinPicker
 from wizard_ui import (BAD, BLUSH, MINT, SKY, VIO, WARN, Card, CheckRow, Segmented, StepItem, TitleBar,
@@ -99,6 +100,8 @@ class _Bus(QObject):
     progress = Signal(str)
     done = Signal(bool, str)
     checks = Signal(list, str)
+    step = Signal(int, object, str)      # remote install checklist: index, None/True/False, detail
+    log = Signal(str)                    # remote install live log line
 
 
 class SetupWizard(QDialog):
@@ -128,6 +131,12 @@ class SetupWizard(QDialog):
         self.bus.progress.connect(self._on_progress)
         self.bus.done.connect(self._on_action_done)
         self.bus.checks.connect(self._on_checks)
+        self.bus.step.connect(self._on_step)
+        self.bus.log.connect(self._on_log)
+        self.ssh_user = prev.get("ssh_user", "")
+        self.ssh_folder = prev.get("folder", "~/waveflow")
+        self._install_log: list[str] = []
+        self._install_view = False
         self._busy = False
 
         outer = QVBoxLayout(self)
@@ -240,6 +249,7 @@ class SetupWizard(QDialog):
             it.update()
         self._update_rail_foot()
         if i == 2:
+            self._show_install_rows(False)    # a fresh visit shows the engine picker again
             self._refresh_configure()
         if i == 3:
             self._run_checks()
@@ -322,6 +332,26 @@ class SetupWizard(QDialog):
         self.addr_hint = _lbl("", "hint")
         for w in (self.addr_label, self.addr, self.addr_hint):
             al.addWidget(w)
+        # SSH target (mock wizard-onsite-ssh-v1 A): only for Onsite Docker and VPS, where setup installs.
+        self.ssh_box = QWidget()
+        sg = QGridLayout(self.ssh_box)
+        sg.setContentsMargins(0, 4, 0, 0)
+        sg.setHorizontalSpacing(10)
+        sg.setVerticalSpacing(5)
+        self.ssh_user_edit = QLineEdit(self.ssh_user)
+        self.ssh_user_edit.setPlaceholderText("your user on the server")
+        self.ssh_user_edit.textChanged.connect(lambda t: (setattr(self, "ssh_user", t.strip()),
+                                                          self._refresh_configure(False)))
+        self.ssh_folder_edit = QLineEdit(self.ssh_folder)
+        self.ssh_folder_edit.textChanged.connect(lambda t: (setattr(self, "ssh_folder", t.strip()),
+                                                            self._refresh_configure(False)))
+        sg.addWidget(_lbl("SSH user", "lbl"), 0, 0)
+        sg.addWidget(_lbl("Install folder on the server", "lbl"), 0, 1)
+        sg.addWidget(self.ssh_user_edit, 1, 0)
+        sg.addWidget(self.ssh_folder_edit, 1, 1)
+        sg.addWidget(_lbl("Uses your SSH key from ~/.ssh. WaveFlow never asks for a password.", "hint"),
+                     2, 0, 1, 2)
+        al.addWidget(self.ssh_box)
         v.addWidget(self.addr_box)
 
         self.method_row = QWidget()
@@ -344,7 +374,8 @@ class SetupWizard(QDialog):
         rr.addStretch(1)
         v.addWidget(self.reach_row)
 
-        v.addWidget(_lbl("Engine", "lbl"))
+        self.eng_label = _lbl("Engine", "lbl")
+        v.addWidget(self.eng_label)
         self.eng_cards = []
         for i, _e in enumerate(S.ENGINES):
             c = Card()
@@ -356,8 +387,11 @@ class SetupWizard(QDialog):
         self.gpu_install.clicked.connect(self._install_directml)
         v.addWidget(self.gpu_install)
 
-        v.addSpacing(4)
-        v.addWidget(_lbl("CPU threads  ·  used by ONNX · CPU", "lbl"))
+        self.thr_box = QWidget()
+        tb = QVBoxLayout(self.thr_box)
+        tb.setContentsMargins(0, 4, 0, 0)
+        tb.setSpacing(5)
+        tb.addWidget(_lbl("CPU threads  ·  used by ONNX · CPU", "lbl"))
         tr = QHBoxLayout()
         self.thr = QSpinBox()
         self.thr.setRange(S.THREADS_MIN, S.THREADS_MAX)
@@ -372,7 +406,8 @@ class SetupWizard(QDialog):
         tr.addWidget(self.thr)
         tr.addWidget(self.thr_auto)
         tr.addWidget(self.thr_hint, 1)
-        v.addLayout(tr)
+        tb.addLayout(tr)
+        v.addWidget(self.thr_box)
 
         self.tok_box = QWidget()
         tl = QVBoxLayout(self.tok_box)
@@ -399,13 +434,63 @@ class SetupWizard(QDialog):
         tl.addWidget(_lbl("Made for you. Use the same token on the server.", "hint"))
         v.addWidget(self.tok_box)
 
+        # Remote install checklist: replaces the engine picker while installing.
+        self.install_box = QWidget()
+        il = QVBoxLayout(self.install_box)
+        il.setContentsMargins(0, 0, 0, 0)
+        il.setSpacing(2)
+        self.install_rows = []
+        for name in RI.STEPS:
+            r = CheckRow()
+            r.set(None, name, "")
+            il.addWidget(r)
+            self.install_rows.append(r)
+        self.install_box.setVisible(False)
+        v.addWidget(self.install_box)
+
         self.msg = _lbl("", "err")
         self.warn = _lbl("", "warn")
         self.progress = _lbl("", "hint")
         for w in (self.msg, self.warn, self.progress):
             v.addWidget(w)
-        self.cfg_primary = self._foot(v, primary="Continue", on_primary=self._configure_primary)
+        self.cmds_only = QPushButton("Show commands only")
+        self.cmds_only.setObjectName("ghost")
+        self.cmds_only.clicked.connect(lambda: self.go(3))
+        self.cfg_primary = self._foot(v, primary="Continue", on_primary=self._configure_primary,
+                                      extra=(self.cmds_only,))
         return page
+
+    # ------------------------------------------------------------ remote install (onsite docker / vps)
+    def _remote_install_mode(self) -> bool:
+        return self.c.option == "vps" or (self.c.option == "onsite" and self.c.method == "docker")
+
+    def _show_install_rows(self, on: bool):
+        """While installing, the checklist takes the place of the engine, threads and token rows."""
+        self._install_view = on          # a flag: isVisible() is False whenever the page itself is hidden
+        self.install_box.setVisible(on)
+        for w in [self.eng_label, self.thr_box, *self.eng_cards]:
+            w.setVisible(not on)
+        self.tok_box.setVisible(not on and self.c.option != "local")
+
+    def _do_remote(self, _plan):
+        c = S.Choices(**vars(self.c))
+        ok, text = RI.install(c, self.ssh_user, self.ssh_folder,
+                              lambda kind, *a: self.bus.step.emit(*a) if kind == "step" else self.bus.log.emit(*a))
+        self.bus.done.emit(ok, text)
+
+    def _on_step(self, i, state, detail):
+        short = detail if len(detail) <= 30 else detail[:29] + "…"   # full text goes to the log / message
+        self.install_rows[i].set(state, RI.STEPS[i], short)
+        if state is False:
+            self.progress.setText(detail)
+
+    def _on_log(self, line):
+        self._install_log = (self._install_log + [line])[-400:]
+        body = "\n".join(html.escape(x) for x in self._install_log)
+        self.cfg_preview.setHtml("<p style='color:#5d6477;font-size:10px;letter-spacing:1px;margin:0 0 6px 0'>"
+                                 f"LIVE LOG</p><pre style='white-space:pre-wrap;margin:0'>{body}</pre>")
+        sb = self.cfg_preview.verticalScrollBar()
+        sb.setValue(sb.maximum())
 
     def _install_directml(self):
         cmds = S.directml_install_commands()
@@ -455,7 +540,7 @@ class SetupWizard(QDialog):
         self.addr_box.setVisible(c.option in ("onsite", "vps"))
         if c.option == "onsite":
             self.addr_label.setText("Server address")
-            self.addr_hint.setText("LAN name, IP, or Tailscale name. Setup never logs in to it.")
+            self.addr_hint.setText("LAN name, IP, or Tailscale name.")
             self.addr.setPlaceholderText("gpu-box.local:8756")
         else:
             self.addr_label.setText("Domain")
@@ -465,7 +550,7 @@ class SetupWizard(QDialog):
         self.method.set(0 if c.method == "docker" else 1)
         self.reach_row.setVisible(c.option == "docker")
         self.reach.set(1 if c.lan else 0)
-        self.tok_box.setVisible(c.option != "local")
+        self.tok_box.setVisible(c.option != "local" and not self._install_view)
         choices = S.engines_for(c.option, c.method, self.hw)
         if rebuild:
             valid = [e.engine for e in choices if e.available]
@@ -481,13 +566,24 @@ class SetupWizard(QDialog):
         self.thr_hint.setText(f"Auto = {self.hw.perf_cores} performance cores on this PC. More is slower on hybrid CPUs."
                               if c.option in ("local", "docker") else
                               "Set to the server's physical performance cores.")
+        remote = self._remote_install_mode()
+        self.ssh_box.setVisible(remote)
+        self.cmds_only.setVisible(remote)
         errs = S.validate(c)
+        if remote:
+            errs += [e for e in RI.validate_target(self.ssh_user, RI.host_of(c.address), self.ssh_folder)
+                     if not e.startswith("Enter the server address")]
         if need_dml:
             errs.append("Install GPU support first, or choose ONNX · CPU.")
         self.msg.setText("  ".join(errs))
         self.warn.setText("  ".join(S.warnings(c)))
         self.cfg_primary.setEnabled(not errs and not self._busy)
-        self.cfg_primary.setText({"local": "Start engine", "docker": "Build & start"}.get(c.option, "Continue"))
+        if remote:
+            self.cfg_primary.setText(f"Install on {RI.host_of(c.address) or 'server'}")
+        else:
+            self.cfg_primary.setText({"local": "Start engine", "docker": "Build & start"}.get(c.option, "Continue"))
+        if self._busy and remote:
+            return                      # the live log owns the preview while installing
         self.cfg_preview.setHtml(self._preview_html(S.build_plan(c) if not errs or c.option == "local" else None, errs))
 
     def _preview_html(self, plan, errs):
@@ -525,6 +621,20 @@ class SetupWizard(QDialog):
                     != QMessageBox.Yes:
                 return
             self._run_async(self._do_docker, plan)
+        elif self._remote_install_mode():
+            host = RI.host_of(c.address)
+            if QMessageBox.question(self, f"Install on {host}",
+                                    f"Setup will connect as {self.ssh_user}@{host} with your SSH key, copy the "
+                                    f"server files to {self.ssh_folder}, write its .env with the token, and run:\n\n"
+                                    + RI.compose_command(plan) + "\n\nThe first build can take several minutes.") \
+                    != QMessageBox.Yes:
+                return
+            self._install_log = []
+            for r, name in zip(self.install_rows, RI.STEPS):
+                r.set(None, name, "")
+            self._show_install_rows(True)
+            self.progress.setText("")
+            self._run_async(self._do_remote, plan)
         else:
             self.go(3)
 
@@ -575,6 +685,8 @@ class SetupWizard(QDialog):
         self._busy = False
         self.progress.setText(text)
         self._refresh_configure(False)
+        if self._install_view:
+            self.cfg_primary.setText("Try again" if not ok else self.cfg_primary.text())
         if ok:
             self.go(3)
 
@@ -677,6 +789,8 @@ class SetupWizard(QDialog):
         plan = S.build_plan(self.c)
         out = dict(self.cfg)
         out.update(plan.config)
+        if self._remote_install_mode():
+            out["engine"] = {**out["engine"], "ssh_user": self.ssh_user, "folder": self.ssh_folder}
         seq = self.hk.keySequence().toString()
         out["hotkey_show"] = seq.replace("Meta", "windows").lower().replace(" ", "") or "ctrl+alt+w"
         out["device_name"] = self.mic.device_name()
