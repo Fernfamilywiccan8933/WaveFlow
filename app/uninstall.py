@@ -10,6 +10,7 @@ and the app folder. A server elsewhere (onsite/VPS) is never touched; its comman
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import shutil
 import subprocess
@@ -130,9 +131,26 @@ def plan_lines(items: list[Item], chosen: set[str]) -> list[str]:
     return out
 
 
+def release_logs():
+    """Close this process's own log files inside WaveFlow's folders. Windows will not delete a file
+    that is still open, and the running app keeps waveflow.log open for its whole life."""
+    root = logging.getLogger()
+    for lg in [root] + [logging.getLogger(n) for n in list(logging.root.manager.loggerDict)]:
+        for h in list(getattr(lg, "handlers", [])):
+            if isinstance(h, logging.FileHandler) and _inside_allowed(Path(h.baseFilename)):
+                lg.removeHandler(h)
+                h.close()
+
+
 def run(items: list[Item], chosen: set[str], engine=None, dry_run=False, log=print) -> list[str]:
-    """Remove the chosen items. Returns error lines (empty = all done)."""
+    """Remove the chosen items. Returns error lines (empty = all done).
+    Order matters: stop the engine and close log files BEFORE deleting anything they hold open."""
     errors = []
+    if not dry_run:
+        if engine is not None:
+            engine.stop()
+        if chosen & {"settings", "folder"}:
+            release_logs()
     for it in items:
         if it.key not in chosen or not it.present:
             continue
@@ -178,8 +196,21 @@ def schedule_folder_delete(folder: Path):
     for the app to exit, then removes the folder."""
     folder = folder.resolve()
     if os.name == "nt":
-        cmd = f'cmd /c "timeout /t 5 /nobreak >nul & rmdir /s /q ""{folder}"""'
-        subprocess.Popen(cmd, creationflags=getattr(subprocess, "DETACHED_PROCESS", 0) | NOWINDOW, cwd=str(folder.parent))
+        q = str(folder).replace("'", "''")          # PowerShell single-quote escape
+        # Wait for THIS process to really exit (its python.exe lives in the folder's venv and stays
+        # locked until then), then retry for a while in case a child is still closing.
+        ps = (f"try {{ Wait-Process -Id {os.getpid()} -Timeout 120 -ErrorAction Stop }} catch {{}}; "
+              f"for ($i = 0; $i -lt 30 -and (Test-Path -LiteralPath '{q}'); $i++) {{ "
+              f"Remove-Item -LiteralPath '{q}' -Recurse -Force -ErrorAction SilentlyContinue; "
+              f"Start-Sleep -Seconds 2 }}")
+        # NOT DETACHED_PROCESS: PowerShell with no console exits at once and deletes nothing (measured).
+        # A hidden console in its own group, broken away from the app's job so it outlives the app.
+        cmd = ["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", ps]
+        base = subprocess.CREATE_NEW_PROCESS_GROUP | NOWINDOW
+        try:
+            subprocess.Popen(cmd, creationflags=base | 0x01000000, cwd=str(folder.parent))   # CREATE_BREAKAWAY_FROM_JOB
+        except OSError:
+            subprocess.Popen(cmd, creationflags=base, cwd=str(folder.parent))                 # job forbids breakaway
     else:
         subprocess.Popen(["sh", "-c", f'sleep 5; rm -rf "{folder}"'], start_new_session=True, cwd=str(folder.parent))
 

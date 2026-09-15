@@ -158,7 +158,7 @@ class UninstallPanel(QWidget):
     """Checklist of what WaveFlow made (uninstall.scan), the exact steps, and the server commands.
     Nothing is removed until Uninstall is pressed and confirmed."""
 
-    finished = Signal(bool)          # True = the app folder is scheduled for deletion: quit the app
+    finished = Signal(bool)          # True = uninstall ran: the app closes
 
     def __init__(self, cfg: dict, engine=None, parent=None):
         super().__init__(parent)
@@ -260,12 +260,12 @@ class UninstallPanel(QWidget):
         chosen = self.chosen()
         folder = "folder" in chosen
         msg = "Remove the selected items?\n\n" + "\n".join(self.U.plan_lines(self.items, chosen))
-        if folder:
-            msg += "\n\nWaveFlow will close, then its folder is deleted."
+        msg += ("\n\nWaveFlow will close, then its folder is deleted." if folder else
+                "\n\nWaveFlow will close when this is done.")
         if QMessageBox.warning(self, "Uninstall WaveFlow", msg,
                                QMessageBox.Yes | QMessageBox.Cancel, QMessageBox.Cancel) != QMessageBox.Yes:
             return
         errors = self.U.run(self.items, chosen, engine=self.engine, log=lambda _l: None)
-        self.result.setText("Done." if not errors else "Some items were not removed:\n" + "\n".join(errors))
-        self.refresh()
-        self.finished.emit(folder and not errors)
+        if errors and not folder:
+            QMessageBox.warning(self, "Uninstall WaveFlow", "Some items were not removed:\n\n" + "\n".join(errors))
+        self.finished.emit(True)             # its files are gone: never keep running half-uninstalled

@@ -72,6 +72,24 @@ with tempfile.TemporaryDirectory() as t:
         errs = U.run([bad], {"settings"}, log=lambda *_: None)
         check("refuses a path outside its own locations", (bool(errs), (outside / "keep.txt").exists()), (True, True))
 
+        # Regression 2026-09-14 (operator's real uninstall): the running app held waveflow.log and
+        # engine.log open, Windows refused to delete them, and the folder was never removed.
+        import logging
+        from local_engine import LocalEngine
+        data.mkdir(parents=True, exist_ok=True)
+        (root / "app" / "config.json").write_text("{}")
+        h = logging.FileHandler(str(root / "app" / "waveflow.log"))
+        logging.getLogger().addHandler(h)
+        logging.getLogger().warning("app is running")
+        eng = LocalEngine()
+        eng._logf = open(eng.log_path, "w")
+        items = {it.key: it for it in U.scan(root / "app" / "config.json")}
+        errs = U.run(list(items.values()), {"settings"}, engine=eng, log=lambda *_: None)
+        check("open log files do not block uninstall", errs, [])
+        check("logs gone", ((root / "app" / "waveflow.log").exists(), data.exists()), (False, False))
+        check("engine log handle closed", eng._logf, None)
+        check("app log handler released", h in logging.getLogger().handlers, False)
+
         U.run([U.Item("folder", "x", "x", default=False, paths=[root])], {"folder"}, log=lambda *_: None)
         check("folder delete is scheduled, not immediate", (scheduled == [root], root.exists()), (True, True))
 

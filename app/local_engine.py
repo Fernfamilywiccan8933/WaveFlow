@@ -20,6 +20,7 @@ import setup_logic as S
 class LocalEngine:
     def __init__(self):
         self.proc: subprocess.Popen | None = None
+        self._logf = None
         self.log_path = S.app_data() / "engine.log"
 
     @staticmethod
@@ -47,7 +48,7 @@ class LocalEngine:
             return f"cannot start: {why}"
         self.stop()
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
-        logf = open(self.log_path, "w", encoding="utf-8", errors="replace")
+        logf = self._logf = open(self.log_path, "w", encoding="utf-8", errors="replace")
         # Models download into this copy's own data folder, never the shared user-profile cache.
         env = {**os.environ, "HF_HOME": str(S.models_dir())}
         self.proc = subprocess.Popen(self.command(engine_cfg), stdout=logf, stderr=subprocess.STDOUT,
@@ -83,6 +84,9 @@ class LocalEngine:
             except subprocess.TimeoutExpired:
                 self.proc.kill()
         self.proc = None
+        if self._logf is not None:          # an open handle blocks deleting engine.log on Windows
+            self._logf.close()
+            self._logf = None
 
 
 def _health(url: str) -> bool:
