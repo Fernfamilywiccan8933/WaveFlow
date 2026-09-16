@@ -31,7 +31,9 @@ Engine: NVIDIA **Parakeet TDT 0.6B v2** (English), via ONNX Runtime (default) or
 **Or install from PowerShell**
 
 ```powershell
-iwr https://github.com/MrAbookah/WaveFlow/releases/latest/download/WaveFlow.exe -OutFile WaveFlow.exe
+$u = "https://github.com/MrAbookah/WaveFlow" +
+     "/releases/latest/download/WaveFlow.exe"
+iwr $u -OutFile WaveFlow.exe
 .\WaveFlow.exe
 ```
 
