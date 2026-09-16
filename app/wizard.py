@@ -172,22 +172,10 @@ class SetupWizard(QDialog):
         body.addWidget(rail)
 
         self.stack = QStackedWidget()
-        # A QStackedWidget reports the LARGEST minimum of all its pages, and those pages made it
-        # 1130x870 — bigger than the window ever asked for, so resize() was silently ignored and
-        # on a smaller screen the footer (and Continue) sat below the bottom edge with no
-        # draggable frame to fix it. Reported from a real Mac, 2026-09-15.
-        # A scroll area breaks that chain: the window may now be any size, and content that no
-        # longer fits scrolls instead of shoving the window off the screen.
-        _scroll = QScrollArea()
-        _scroll.setWidgetResizable(True)
-        _scroll.setFrameShape(QFrame.NoFrame)
-        _scroll.setWidget(self.stack)
-        _scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        # With widgetResizable a QScrollArea adopts its widget's minimum as its own, which
-        # defeats the whole point: the window still could not shrink. An explicit small
-        # minimum is what actually lets content be larger than the view and scroll.
-        _scroll.setMinimumSize(360, 240)
-        body.addWidget(_scroll, 1)
+        # No scroll area around the STACK: each page scrolls its own content and keeps its
+        # footer pinned below it (see _shell). Wrapping the whole stack instead is what
+        # scrolled Continue off the bottom of Welcome and Where.
+        body.addWidget(self.stack, 1)
         self.pages = [self._page_welcome(), self._page_where(), self._page_configure(),
                       self._page_test(), self._page_hotkey()]
         for p in self.pages:
@@ -217,16 +205,49 @@ class SetupWizard(QDialog):
         h = QHBoxLayout(page)
         h.setContentsMargins(0, 0, 0, 0)
         h.setSpacing(0)
+        # The column is split in two on purpose:
+        #
+        #   [ scrollable content ]   <- grows, and scrolls when it does not fit
+        #   [ footer             ]   <- pinned, ALWAYS visible
+        #
+        # An earlier fix put the WHOLE page inside one scroll area. That let the window shrink,
+        # but the footer scrolled with everything else: Welcome and Where are 913px tall in a
+        # 608px viewport, so Continue sat at y=862 and was simply not on screen. The operator's
+        # words: "the continue button is gone from the wizard". The control a user needs in order
+        # to make progress must never be the thing that scrolls out of reach.
         main = QWidget()
-        v = QVBoxLayout(main)
-        v.setContentsMargins(28, 24, 28, 20)
+        mainv = QVBoxLayout(main)
+        mainv.setContentsMargins(0, 0, 0, 0)
+        mainv.setSpacing(0)
+
+        content = QWidget()
+        v = QVBoxLayout(content)
+        v.setContentsMargins(28, 24, 28, 10)
         v.setSpacing(10)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setWidget(content)
+        # Without an explicit minimum a QScrollArea adopts its widget's, which is exactly what
+        # stopped the window shrinking before.
+        scroll.setMinimumSize(320, 180)
+        mainv.addWidget(scroll, 1)
+
+        foot_slot = QVBoxLayout()
+        foot_slot.setContentsMargins(28, 6, 28, 18)
+        mainv.addLayout(foot_slot)
+        v._foot_slot = foot_slot        # _foot() puts the buttons here, outside the scroll
+
         h.addWidget(main, 58)
         prev = None
         if with_preview:
             pw = QFrame()
             pw.setObjectName("preview")
-            pw.setMinimumWidth(360)
+            # 360 made the Test page demand 1100px on its own, which does not fit a 12-inch
+            # MacBook once the rail is added. The preview is a log and a command pane: it can be
+            # narrow and scroll. The window fitting the screen matters more than this being wide.
+            pw.setMinimumWidth(220)
             pv = QVBoxLayout(pw)
             pv.setContentsMargins(18, 18, 18, 18)
             prev = QTextEdit()
@@ -259,8 +280,15 @@ class SetupWizard(QDialog):
         p.setCursor(Qt.PointingHandCursor)
         p.clicked.connect(on_primary or (lambda: self.go(self.step + 1)))
         row.addWidget(p)
-        v.addStretch(1)
-        v.addLayout(row)
+        slot = getattr(v, "_foot_slot", None)
+        if slot is not None:
+            # Outside the scroll area, so it cannot scroll away. The stretch stays in the content
+            # column so short pages still push their own body to the top.
+            v.addStretch(1)
+            slot.addLayout(row)
+        else:
+            v.addStretch(1)
+            v.addLayout(row)
         return p
 
     def _detect_line(self):
