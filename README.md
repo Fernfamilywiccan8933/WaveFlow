@@ -12,6 +12,10 @@ Engine: NVIDIA **Parakeet TDT 0.6B v2** (English), via ONNX Runtime (default) or
 
 ## What it looks like
 
+The overlay while you talk — two skins, switch any time in Settings:
+
+<p align="center"><img src="docs/shot_overlay.png" width="720"></p>
+
 | Setup wizard — where the engine runs | Configure and start it |
 |---|---|
 | <img src="docs/shot_wizard_where.png" width="430"> | <img src="docs/shot_wizard_configure.png" width="430"> |
