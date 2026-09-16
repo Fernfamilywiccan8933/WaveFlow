@@ -16,29 +16,84 @@ Engine: NVIDIA **Parakeet TDT 0.6B v2** (English), via ONNX Runtime (default) or
 
 ## Get it
 
-### Windows — download and run
+<table>
+<tr>
+<th width="50%">🪟 &nbsp; Windows</th>
+<th width="50%">🍎 &nbsp; macOS</th>
+</tr>
+<tr valign="top">
+<td>
 
-[**Download WaveFlow.exe**](../../releases/latest), then double-click it. Nothing else to install.
+**Download the app**
 
-To check the download is the file this repo published:
+[**WaveFlow.exe**](../../releases/latest) → double-click. Nothing to install.
+
+**Or install from PowerShell**
+
+```powershell
+iwr https://github.com/MrAbookah/WaveFlow/releases/latest/download/WaveFlow.exe -OutFile WaveFlow.exe
+.\WaveFlow.exe
+```
+
+**Or run from source**
+
+```powershell
+git clone https://github.com/MrAbookah/WaveFlow.git
+cd WaveFlow
+py -3.12 -m venv venv
+venv\Scripts\pip install -r requirements.txt
+venv\Scripts\python app\waveflow.py
+```
+
+Check a download is really ours:
 
 ```powershell
 Get-FileHash .\WaveFlow.exe -Algorithm SHA256
 ```
 
-Compare the result with `WaveFlow.exe.sha256` beside the download.
+Compare it with `WaveFlow.exe.sha256` beside the download.
 
-### macOS — one command
+</td>
+<td>
 
-Paste this whole block into Terminal:
+**Download the app**
+
+No prebuilt `.app` yet — a Mac build has to be made on a Mac, and none has been published. Build
+it yourself in one command below; it takes about a minute.
+
+**Install from Terminal**
 
 ```bash
-git clone https://github.com/MrAbookah/WaveFlow.git && cd WaveFlow && python3 -m venv venv && venv/bin/pip install -r requirements.txt pyobjc-framework-Cocoa pyobjc-framework-Quartz pyobjc-framework-ApplicationServices && venv/bin/python app/waveflow.py
+git clone https://github.com/MrAbookah/WaveFlow.git
+cd WaveFlow
+python3 -m venv venv
+venv/bin/pip install -r requirements.txt \
+  pyobjc-framework-Cocoa \
+  pyobjc-framework-Quartz \
+  pyobjc-framework-ApplicationServices
+venv/bin/python app/waveflow.py
 ```
 
-The setup wizard opens. It knows it is on a Mac and offers the engines that exist there.
+**Or make a double-clickable app**
 
-**macOS asks for three permissions, and the app can do nothing without them:**
+```bash
+venv/bin/python app/build.py        # -> dist/WaveFlow.app
+```
+
+Gatekeeper blocks the first double-click on an unsigned app. Right-click it, choose **Open**
+once, and it opens normally after that.
+
+</td>
+</tr>
+</table>
+
+The setup wizard opens on first start. It is the same wizard on both systems and it knows which
+one it is on, so it offers only the engines that exist there.
+
+### macOS permissions
+
+macOS asks for three, and the app can do **nothing** without them. It will look broken, and it is
+not.
 
 | Permission | What it is for |
 |---|---|
@@ -46,20 +101,11 @@ The setup wizard opens. It knows it is on a Mac and offers the engines that exis
 | Accessibility | to type the words into the app you are using |
 | Input Monitoring | to notice your hotkey while another app is in front |
 
-The wizard's last page lists them with a button to each settings page.
+The wizard's last page lists all three with a button to each settings page.
 
-> **After an update, re-grant two of them.** WaveFlow is not signed by a paid Apple developer
+> **Re-grant two of them after every update.** WaveFlow is not signed by a paid Apple developer
 > account, and macOS ties Accessibility and Input Monitoring to the exact app file — so it forgets
 > them whenever that file changes. This is macOS behaviour, not a fault in WaveFlow.
-
-To build a double-clickable `WaveFlow.app` instead of running from the terminal:
-
-```bash
-venv/bin/python app/build.py
-```
-
-Gatekeeper blocks the first double-click on an unsigned app. Right-click it and choose **Open**
-once; after that it opens normally.
 
 ### Or have an AI install it
 
@@ -71,7 +117,7 @@ Read its README first and follow the section for my operating system.
 Create the virtual environment inside the cloned folder, never system-wide.
 On macOS also install the three pyobjc frameworks the README names, then tell me
 exactly which system permissions I must grant by hand - you cannot grant them for
-me. Do not change any of my existing settings or install anything globally.
+me. Do not change any of my existing settings and do not install anything globally.
 When the setup wizard opens, stop and hand it back to me.
 ```
 
@@ -92,8 +138,7 @@ have to: point it at a box that has the GPU, and dictate from a thin laptop.
 | Numbers in this README | "3x faster" | measured, with the commands to repeat them |
 
 It is GPL-3.0 and English-only. The Windows client is proven; the macOS client is new and
-unconfirmed. The engine is NVIDIA Parakeet TDT 0.6B v2 —
-not Whisper.
+unconfirmed. The engine is NVIDIA Parakeet TDT 0.6B v2 — not Whisper.
 
 ## What it looks like
 
@@ -163,8 +208,10 @@ NeMo Docker image already works on Pascal.
 
 ## A. This PC — background app (ONNX)
 
+Already installed from [Get it](#get-it)? Skip to the next paragraph. From scratch:
+
 ```powershell
-git clone <this repo> WaveFlow
+git clone https://github.com/MrAbookah/WaveFlow.git
 cd WaveFlow
 py -3.12 -m venv venv
 venv\Scripts\pip install -r requirements.txt
