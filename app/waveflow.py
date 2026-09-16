@@ -2446,9 +2446,14 @@ def main() -> int:
     if len(sys.argv) == 1:
         import setup_logic
         if setup_logic.console_launch() and setup_logic.relaunch_detached():
-            # Started from a terminal: the app now runs on its own (pythonw), so closing the
-            # terminal no longer closes WaveFlow. Flags (--demo, --replay …) keep the console.
+            # Started from a terminal: the app is now its own process — pythonw on Windows, its
+            # own session (setsid) on macOS — so closing that terminal no longer closes WaveFlow.
+            # Only a bare launch does this; any flag (--demo, --replay …) keeps the console, which
+            # is what makes those flags debuggable at all.
             print("WaveFlow is starting in the background. You can close this window.")
+            if setup_logic.IS_MAC:
+                print("It lives in the menu bar. For an icon you can reopen from Launchpad:")
+                print("  venv/bin/python app/build.py --install")
             return 0
 
     app = QApplication(sys.argv)

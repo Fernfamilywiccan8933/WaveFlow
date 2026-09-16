@@ -9,6 +9,7 @@ Run: venv/Scripts/python.exe app/build.py     (Windows)
      venv/bin/python app/build.py             (macOS)
 """
 import argparse
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -26,6 +27,11 @@ def main() -> int:
     # them, or the checksum people downloaded stops matching the file it names.
     ap.add_argument("--dist", default=str(ROOT / "dist"),
                     help="output folder (default: dist/, which is the RELEASE)")
+    ap.add_argument("--install", nargs="?", const="__default__", default=None,
+                    metavar="FOLDER",
+                    help="after building, put the app where you can actually launch it. "
+                         "macOS default /Applications, Windows default %%LOCALAPPDATA%%\\WaveFlow. "
+                         "Give a folder to choose your own.")
     opts = ap.parse_args()
     dist = Path(opts.dist)
     # ensure PyInstaller present
@@ -85,7 +91,62 @@ def main() -> int:
     print(f"\nOK -> {out}  ({size // (1024 * 1024)} MB)")
     if IS_MAC:
         _mac_after(out)
+    if opts.install is not None:
+        _install(out, opts.install)
+    elif IS_MAC:
+        print("\nTo put it somewhere you can launch it from Launchpad or Spotlight:")
+        print("  venv/bin/python app/build.py --install")
+        print("  venv/bin/python app/build.py --install ~/Apps      # or anywhere you like")
     return 0
+
+
+def default_install_dir() -> Path:
+    """Where an app belongs on this OS, if the user does not say."""
+    if IS_MAC:
+        return Path("/Applications")
+    # Windows: this user's own folder. Program Files would need admin rights, and WaveFlow has
+    # never asked for any.
+    base = os.environ.get("LOCALAPPDATA") or str(Path.home())
+    return Path(base) / "WaveFlow"
+
+
+def _install(built: Path, where: str) -> None:
+    """Copy the built app to a folder the user can launch it from.
+
+    This exists because a build alone leaves the app inside the source tree, reachable only by
+    typing a path — the operator's words, 2026-09-16: "once i close the terminal window the app
+    goes away and i cant reopen it". An app you cannot find again is not installed.
+    """
+    import shutil
+
+    target_dir = default_install_dir() if where == "__default__" else Path(where).expanduser()
+    target = target_dir / built.name
+    try:
+        target_dir.mkdir(parents=True, exist_ok=True)
+        if target.exists():
+            # Replacing a .app means removing the old bundle first: copytree will not merge two
+            # directories, and a half-merged bundle is one macOS refuses to open.
+            shutil.rmtree(target) if target.is_dir() else target.unlink()
+        if built.is_dir():
+            shutil.copytree(built, target, symlinks=True)     # symlinks: a bundle is full of them
+        else:
+            shutil.copy2(built, target)
+    except PermissionError:
+        print(f"\nCould not write to {target_dir} — no permission.")
+        print(f"Either pick a folder you own:  --install ~/Apps")
+        print(f"or move it by hand:            mv '{built}' '{target_dir}/'")
+        return
+    except OSError as e:
+        print(f"\nCould not install to {target_dir}: {e}")
+        return
+
+    print(f"\nInstalled -> {target}")
+    if IS_MAC:
+        print("Open it from Launchpad or Spotlight (Cmd+Space, type WaveFlow).")
+        print("FIRST TIME: right-click it in Finder and choose Open — Gatekeeper blocks a")
+        print("double-click on an app that is not signed by a paid Apple account.")
+        print("Then re-grant Accessibility and Input Monitoring: the permissions followed the")
+        print("old copy, and to macOS this path is a different app.")
 
 
 def _mac_after(app: Path) -> None:

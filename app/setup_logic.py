@@ -532,15 +532,45 @@ def autostart_command() -> str:
 
 
 def console_launch() -> bool:
-    """True when started as `python.exe waveflow.py` from a terminal (not the .exe, not pythonw)."""
-    return (sys.platform == "win32" and not getattr(sys, "frozen", False)
-            and Path(sys.executable).name.lower() == "python.exe")
+    """True when the app was started from a terminal and would die with it.
+
+    Windows: `python.exe waveflow.py` (not the frozen .exe, not pythonw).
+    macOS:   any unfrozen run whose stdout is a terminal. Closing Terminal sends SIGHUP to every
+             process in its session, so a plain `venv/bin/python app/waveflow.py` dies with the
+             window. Reported from a real Mac, 2026-09-16: "once i close the terminal window the
+             app goes away and i cant reopen it".
+    """
+    if getattr(sys, "frozen", False):
+        return False
+    if IS_WINDOWS:
+        return Path(sys.executable).name.lower() == "python.exe"
+    if IS_MAC:
+        try:
+            return sys.stdout is not None and sys.stdout.isatty()
+        except Exception:
+            return False
+    return False
 
 
 def relaunch_detached() -> bool:
-    """Start the same app under pythonw, outside this terminal, so closing the terminal does not
-    close WaveFlow (operator, 2026-09-15). Returns False if it could not, so the caller keeps
-    running here instead."""
+    """Start the same app outside this terminal, so closing the terminal does not close WaveFlow.
+
+    Returns False if it could not, and the caller then just keeps running here — a WaveFlow tied
+    to a terminal is worse than no WaveFlow, but only slightly.
+    """
+    if IS_MAC:
+        # start_new_session=True is setsid(): the child leads its own session with no controlling
+        # terminal, so the SIGHUP that Terminal sends on close never reaches it. The standard
+        # streams must go to devnull as well — a process writing to a closed terminal dies of
+        # SIGPIPE, which would undo the whole point.
+        try:
+            with open(os.devnull, "r+b") as null:
+                subprocess.Popen([sys.executable, str(ROOT / "app" / "waveflow.py")],
+                                 start_new_session=True, cwd=str(ROOT),
+                                 stdin=null, stdout=null, stderr=null, close_fds=True)
+            return True
+        except OSError:
+            return False
     prog, _ = launch_parts()
     if Path(prog).name.lower() != "pythonw.exe":
         return False

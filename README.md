@@ -80,14 +80,20 @@ venv/bin/pip install -r requirements.txt \
 venv/bin/python app/waveflow.py
 ```
 
-**Or make a double-clickable app**
+**Then install it properly**
 
 ```bash
-venv/bin/python app/build.py
+venv/bin/python app/build.py --install
 ```
 
-That writes `dist/WaveFlow.app`. Gatekeeper blocks the first double-click on an unsigned app —
-right-click it, choose **Open** once, and it opens normally after that.
+Builds `WaveFlow.app` and puts it in **/Applications**, so you can reopen it from Launchpad or
+Spotlight. Pick your own folder with `--install ~/Apps`.
+
+Gatekeeper blocks the first double-click on an unsigned app — right-click it, choose **Open**
+once, and it opens normally after that.
+
+> Running `app/waveflow.py` straight from Terminal is fine for a first look, but it lives in the
+> menu bar with no icon to reopen. Install it and you get one.
 
 </td>
 </tr>
