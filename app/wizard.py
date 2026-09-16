@@ -121,8 +121,9 @@ class SetupWizard(QDialog):
                            engine=prev.get("engine", "onnx-cpu"), method=prev.get("method", "docker"),
                            threads=prev.get("threads", self.hw.perf_cores),
                            auto_threads=prev.get("auto_threads", True),
-                           address=self.cfg.get("url", "") if prev.get("mode") in ("onsite", "vps") else "",
-                           token=self.cfg.get("token") or S.new_token())
+                           address=self.cfg.get("url", "") if prev.get("mode") in S.REMOTE_OPTIONS else "",
+                           token=self.cfg.get("token") or
+                           ("" if prev.get("mode") == "connect" else S.new_token()))
         if self.c.auto_threads:
             self.c.threads = self.hw.perf_cores
         self.result_cfg: dict | None = None
@@ -233,8 +234,13 @@ class SetupWizard(QDialog):
     def _detect_line(self):
         def b(x):
             return f"<b style='color:#e9ecf3'>{x}</b>"
-        return (f"This PC: {b(f'{self.hw.perf_cores} performance cores')} &nbsp;&nbsp; "
-                f"GPU: {b('DirectX 12' if self.hw.directml else 'DirectML not installed')} &nbsp;&nbsp; "
+        host = "This Mac" if S.IS_MAC else "This PC"
+        # Naming the wrong accelerator is worse than naming none: DirectML does not exist on
+        # a Mac and CoreML does not exist on Windows.
+        gpu = (('CoreML ready' if self.hw.coreml else 'CoreML not installed') if S.IS_MAC
+               else ('DirectX 12' if self.hw.directml else 'DirectML not installed'))
+        return (f"{host}: {b(f'{self.hw.perf_cores} performance cores')} &nbsp;&nbsp; "
+                f"GPU: {b(gpu)} &nbsp;&nbsp; "
                 f"Docker: {b('found' if self.hw.docker else 'not found')} &nbsp;&nbsp; "
                 f"NVIDIA: {b('found' if self.hw.nvidia else 'not found')}")
 
@@ -288,18 +294,36 @@ class SetupWizard(QDialog):
         self._heading(v, "Where should speech recognition run?", "Audio only goes to the machine you pick.")
         grid = QGridLayout()
         grid.setSpacing(8)
-        lines = {"local": "Runs quietly with the app. No Docker. Any 4+ core CPU or a DirectX 12 GPU.",
-                 "docker": "Engine in a container on this PC. Docker Desktop.",
+        _here = "this Mac" if S.IS_MAC else "this PC"
+        _gpu = "an Apple Silicon or Intel Mac GPU" if S.IS_MAC else "a DirectX 12 GPU"
+        lines = {"local": f"Runs quietly with the app. No Docker. Any 4+ core CPU or {_gpu}.",
+                 "docker": f"Engine in a container on {_here}. Docker Desktop.",
                  "onsite": "A box at home: LAN, Tailscale or VPN. Docker or Python venv.",
-                 "vps": "Your own server on the internet. Docker, a domain, HTTPS."}
+                 "vps": "Your own server on the internet. Docker, a domain, HTTPS.",
+                 "connect": "It is already up. Setup installs nothing — it asks for the address "
+                            "and the token, then tests them."}
         self.opt_cards = []
-        for n, k in enumerate(S.OPTIONS):
+        for n, k in enumerate(S.INSTALL_OPTIONS):
             c = Card(S.OPTION_NAMES[k], lines[k], badge="Recommended" if k == "local" else "")
             c.setAutoExclusive(True)
             c.setChecked(k == self.c.option)
             c.clicked.connect(lambda _=False, n=n: self._set_option(n))
             grid.addWidget(c, n // 2, n % 2)
             self.opt_cards.append(c)
+        # "connect" sits apart, under an "or", spanning both columns. The four cards above all mean
+        # "install a server for me"; this one means the opposite. As a fifth card in the same grid
+        # it read as a fifth flavour of install (mock A, operator pick 2026-09-15).
+        row = (len(S.INSTALL_OPTIONS) + 1) // 2
+        orx = _lbl("or", "detect")
+        orx.setAlignment(Qt.AlignCenter)
+        grid.addWidget(orx, row, 0, 1, 2)
+        nc = S.OPTIONS.index("connect")
+        cc = Card(S.OPTION_NAMES["connect"], lines["connect"], badge="No install")
+        cc.setAutoExclusive(True)
+        cc.setChecked(self.c.option == "connect")
+        cc.clicked.connect(lambda _=False, n=nc: self._set_option(n))
+        grid.addWidget(cc, row + 1, 0, 1, 2)
+        self.opt_cards.append(cc)
         v.addLayout(grid)
         v.addSpacing(6)
         v.addWidget(_divider())
@@ -310,9 +334,19 @@ class SetupWizard(QDialog):
         return page
 
     def _set_option(self, n):
+        was = self.c.option
         self.c.option = S.OPTIONS[n]
         if self.c.option == "vps" and self.c.address.startswith("http://"):
             self.c.address = ""
+        # The token we generate is ours to put ON a server we install. For "connect" the server is
+        # already running and only accepts the token IT was started with, so a pre-filled one is a
+        # guaranteed 401 that looks like a typo. Clear it, and put a fresh one back on the way out.
+        if self.c.option == "connect" and was != "connect":
+            self._made_token, self.c.token = self.c.token, ""
+        elif was == "connect" and self.c.option != "connect" and not self.c.token:
+            self.c.token = getattr(self, "_made_token", "") or S.new_token()
+        if hasattr(self, "tok"):
+            self.tok.setText(self.c.token)
         self._update_rail_foot()
 
     # ------------------------------------------------------------ 2 configure
@@ -368,7 +402,7 @@ class SetupWizard(QDialog):
         rr = QHBoxLayout(self.reach_row)
         rr.setContentsMargins(0, 0, 0, 0)
         rr.addWidget(_lbl("Reachable from", "lbl", wrap=False))
-        self.reach = Segmented(["This PC only", "My network"])
+        self.reach = Segmented(["This Mac only" if S.IS_MAC else "This PC only", "My network"])
         self.reach.changed.connect(self._set_reach)
         rr.addWidget(self.reach)
         rr.addStretch(1)
@@ -383,7 +417,9 @@ class SetupWizard(QDialog):
             c.clicked.connect(lambda _=False, i=i: self._set_engine(i))
             v.addWidget(c)
             self.eng_cards.append(c)
-        self.gpu_install = QPushButton("Install GPU support  ·  onnxruntime-directml")
+        self.gpu_install = QPushButton(
+            "Install GPU support  ·  " + ("onnxruntime-silicon" if S.IS_MAC
+                                          else "onnxruntime-directml"))
         self.gpu_install.clicked.connect(self._install_directml)
         v.addWidget(self.gpu_install)
 
@@ -420,7 +456,9 @@ class SetupWizard(QDialog):
         self.tok.setEchoMode(QLineEdit.Password)
         self.tok.textChanged.connect(lambda t: (setattr(self.c, "token", t.strip()), self._refresh_configure(False)))
         trow.addWidget(self.tok, 1)
+        self.tok_buttons = {}
         for text, fn, checkable in (("Show", None, True), ("Copy", lambda: QGuiApplication.clipboard().setText(self.c.token), False),
+                                    ("Paste", lambda: self.tok.setText((QGuiApplication.clipboard().text() or "").strip()), False),
                                     ("New", lambda: self.tok.setText(S.new_token()), False)):
             b = QPushButton(text)
             b.setObjectName("pill")
@@ -430,6 +468,7 @@ class SetupWizard(QDialog):
             else:
                 b.clicked.connect(fn)
             trow.addWidget(b)
+            self.tok_buttons[text] = b
         tl.addLayout(trow)
         self.tok_hint = _lbl("", "hint")
         tl.addWidget(self.tok_hint)
@@ -494,7 +533,7 @@ class SetupWizard(QDialog):
         sb.setValue(sb.maximum())
 
     def _install_directml(self):
-        cmds = S.directml_install_commands()
+        cmds = S.gpu_install_commands()
         shown = "\n".join(" ".join(c[2:]) for c in cmds)
         if QMessageBox.question(self, "Install GPU support",
                                 f"This replaces the CPU build of ONNX Runtime with the DirectML build:\n\n"
@@ -537,12 +576,18 @@ class SetupWizard(QDialog):
 
     def _refresh_configure(self, rebuild=True):
         c = self.c
+        connect = c.option == "connect"
         self.cfg_title.setText(f"Configure — {S.OPTION_NAMES[c.option]}")
-        self.addr_box.setVisible(c.option in ("onsite", "vps"))
-        if c.option == "onsite":
+        self.addr_box.setVisible(c.option in S.REMOTE_OPTIONS)
+        if connect:
+            self.addr_label.setText("Server address")
+            self.addr_hint.setText("Where WaveFlow should send audio. LAN name, IP, Tailscale name, "
+                                   "or an https:// domain.")
+            self.addr.setPlaceholderText("server.local:8756")
+        elif c.option == "onsite":
             self.addr_label.setText("Server address")
             self.addr_hint.setText("LAN name, IP, or Tailscale name.")
-            self.addr.setPlaceholderText("gpu-box.local:8756")
+            self.addr.setPlaceholderText("server.local:8756")
         else:
             self.addr_label.setText("Domain")
             self.addr_hint.setText("HTTPS only. The DNS name must point at the VPS first.")
@@ -552,6 +597,16 @@ class SetupWizard(QDialog):
         self.reach_row.setVisible(c.option == "docker")
         self.reach.set(1 if c.lan else 0)
         self.tok_box.setVisible(c.option != "local" and not self._install_view)
+        # connect: the server already chose its engine and its thread count. Showing either control
+        # would invite a change that does nothing, so both blocks go away entirely.
+        self.eng_label.setVisible(not connect)
+        self.thr_box.setVisible(not connect)
+        for card in self.eng_cards:
+            card.setVisible(not connect)
+        # "New" would mint a token the running server has never heard of; "Paste" is what you
+        # actually need here, because the real token lives on that server.
+        self.tok_buttons["New"].setVisible(not connect)
+        self.tok_buttons["Paste"].setVisible(connect)
         choices = S.engines_for(c.option, c.method, self.hw)
         if rebuild:
             valid = [e.engine for e in choices if e.available]
@@ -561,7 +616,8 @@ class SetupWizard(QDialog):
             card.set_content(e.label, e.detail, note=e.reason)
             card.setEnabled(e.available)
             card.setChecked(e.engine == c.engine)
-        need_dml = c.option == "local" and c.engine == "onnx-gpu" and not self.hw.directml
+        have_gpu = self.hw.coreml if S.IS_MAC else self.hw.directml
+        need_dml = c.option == "local" and c.engine == "onnx-gpu" and not have_gpu
         self.gpu_install.setVisible(need_dml)
         self.thr.setEnabled(not c.auto_threads)
         self.thr_hint.setText(f"Auto = {self.hw.perf_cores} performance cores on this PC. More is slower on hybrid CPUs."
@@ -569,6 +625,10 @@ class SetupWizard(QDialog):
                               "Set to the server's physical performance cores.")
         remote = self._remote_install_mode()
         self.tok_hint.setText(
+            # connect is the one mode where the token is NOT ours to make. Offering a generated one
+            # would guarantee a 401: the running server only accepts the token it was started with.
+            "Paste the token your server was started with — its WAVEFLOW_TOKEN. "
+            "Leave it empty if you started it without one." if connect else
             "Made for you. Install puts it on the server for you, and it is saved in Settings → Connection "
             "(Show / Copy) for reinstalling or reconnecting." if remote else
             "Made for you and saved in Settings → Connection. Put the same token in the server's "
@@ -723,15 +783,23 @@ class SetupWizard(QDialog):
         plan = S.build_plan(self.c)
         self.plan = plan
         self.test_lead.setText(f"{S.OPTION_NAMES[self.c.option]}  ·  {plan.url}"
-                               + ("  ·  DNS and HTTPS certificate checked first" if self.c.option == "vps" else ""))
+                               + ("  ·  DNS and HTTPS certificate checked first" if self.c.option == "vps" else "")
+                               + ("  ·  nothing was installed" if self.c.option == "connect" else ""))
         names = ["Server answers", "Engine ready", "Token accepted", "Sample clip transcribed"]
         for r, n in zip(self.check_rows, names):
             r.set(None, n, "…")
         self.verdict.setText("Testing…")
         self.verdict.setStyleSheet("padding:10px 12px;border-radius:10px;color:#8d94a6;")
         self.test_next.setEnabled(False)
-        self.skip.setVisible(self.c.option in ("onsite", "vps"))
-        remote = self.c.option != "local"
+        # connect keeps the escape hatch too: the server is meant to be up, but it can be rebooting,
+        # and without this a temporarily-down box would leave setup impossible to finish.
+        self.skip.setVisible(self.c.option in S.REMOTE_OPTIONS)
+        # require_token asks "should a server with NO auth be treated as a failure?". For the
+        # options we install, yes — we set the token, so a tokenless server means it did not take.
+        # For "connect" it depends entirely on what the operator typed: a tokenless server he runs
+        # himself is a legitimate setup, and failing it would be us refusing his own machine.
+        remote = (bool(self.c.token) if self.c.option == "connect"
+                  else self.c.option != "local")
         threading.Thread(target=lambda: self.bus.checks.emit(
             *S.run_checks(plan.url, plan.token, require_token=remote)), daemon=True).start()
 
@@ -776,6 +844,28 @@ class SetupWizard(QDialog):
         right.addWidget(_lbl("Look", "lbl"))
         self.skin = SkinPicker(self.cfg.get("skin", "aurora"))
         right.addWidget(self.skin)
+        # macOS ONLY. Windows needs no permission to type into another app or to claim a hotkey;
+        # macOS refuses both until they are granted, and refuses them SILENTLY — the app simply
+        # does nothing. Putting this next to the hotkey field is deliberate: that is the control
+        # that stops working without Input Monitoring.
+        self.perm_box = QWidget()
+        pv = QVBoxLayout(self.perm_box)
+        pv.setContentsMargins(0, 14, 0, 0)
+        pv.setSpacing(6)
+        pv.addWidget(_lbl("Permissions macOS needs", "lbl"))
+        self.perm_rows = QVBoxLayout()
+        self.perm_rows.setSpacing(6)
+        pv.addLayout(self.perm_rows)
+        recheck = QPushButton("Re-check")
+        recheck.setObjectName("pill")
+        recheck.clicked.connect(self._refresh_permissions)
+        pv.addWidget(recheck, 0, Qt.AlignLeft)
+        self.perm_note = _lbl("", "hint")
+        pv.addWidget(self.perm_note)
+        right.addWidget(self.perm_box)
+        self.perm_box.setVisible(S.IS_MAC)
+        if S.IS_MAC:
+            self._refresh_permissions()
         right.addStretch(1)
         two.addLayout(left, 1)
         two.addLayout(right, 1)
@@ -783,9 +873,48 @@ class SetupWizard(QDialog):
         self._foot(v, primary="Finish", on_primary=self._finish)
         return page
 
+    def _refresh_permissions(self):
+        """Redraw the macOS permission rows from what the OS says RIGHT NOW.
+
+        It asks without prompting, on purpose: the prompting form of the check pops a system
+        dialog, and a screen that nags every time it repaints would be intolerable. The user
+        gets the dialog when they press Open Settings, which is when they asked for it.
+        """
+        import osbridge
+        while self.perm_rows.count():
+            it = self.perm_rows.takeAt(0)
+            if it.widget():
+                it.widget().deleteLater()
+        missing = dict(osbridge.missing_permissions())
+        for name, why in (("Accessibility", "to type the words into the app you are using"),
+                          ("Input Monitoring", "to notice your hotkey while another app is in front")):
+            r = QHBoxLayout()
+            granted = name not in missing
+            tick = _lbl(("✓  " if granted else "•  ") + name, "rowt", wrap=False)
+            tick.setStyleSheet(f"color:{MINT if granted else WARN};")
+            col = QVBoxLayout()
+            col.setSpacing(1)
+            col.addWidget(tick)
+            col.addWidget(_lbl(why, "hint"))
+            r.addLayout(col, 1)
+            if not granted:
+                b = QPushButton("Open Settings")
+                b.setObjectName("pill")
+                b.clicked.connect(lambda _=False, n=name: osbridge.open_permission_settings(n))
+                r.addWidget(b)
+            w = QWidget()
+            w.setLayout(r)
+            self.perm_rows.addWidget(w)
+        # Said out loud, because otherwise the app looks broken after every update.
+        self.perm_note.setText(osbridge.permission_note() if missing else
+                               "All set. macOS forgets these whenever the app file changes, "
+                               "so re-check after an update.")
+
     def _start_mic(self):
         if self.step == 4:
             self.mic.start()
+            if S.IS_MAC:
+                self._refresh_permissions()
 
     def _stop_mic(self):
         if getattr(self, "mic", None) is not None:

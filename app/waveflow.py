@@ -25,21 +25,53 @@ import sys
 import threading
 import time
 import wave
-from ctypes import wintypes
 from pathlib import Path
 
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import osbridge  # noqa: E402
 from audio import MicStream, ReplayMic, clean_input_devices, float_to_wav16k  # noqa: E402
 from icons import app_icon, tray_icon  # noqa: E402
-from stt import (auth_headers, cleanup, focus_window, inject_text, send_backspaces,  # noqa: E402
-                 send_text, strip_fillers, transcribe, window_title)
+# Only the PORTABLE half of stt is imported by name. Typing, backspacing, focusing and reading a
+# window title now go through osbridge, because their Windows bodies live in stt and their macOS
+# bodies live in osbridge.mac — and the app must not know which one it got.
+from stt import auth_headers, cleanup, strip_fillers, transcribe  # noqa: E402
+
+IS_WINDOWS = sys.platform == "win32"
+# `ctypes.wintypes` is Windows-only and raises on import anywhere else. Same story as stt.py:
+# this one line alone stopped the whole app from loading on a Mac.
+if IS_WINDOWS:
+    from ctypes import wintypes
+
+
+# --- the input calls, routed -----------------------------------------------------------------
+# Deliberately thin, and deliberately keeping the OLD NAMES: the ~15 call sites further down did
+# not have to be touched, so this cannot change Windows behaviour. On Windows osbridge.win
+# delegates straight back into stt — the code that has been in daily use.
+def send_text(text: str) -> int:
+    return osbridge.type_text(text)
+
+
+def send_backspaces(n: int) -> int:
+    return osbridge.send_backspaces(n)
+
+
+def inject_text(text: str, prefer_paste: bool = True) -> str:
+    return osbridge.inject_text(text, prefer_paste)
+
+
+def focus_window(handle) -> bool:
+    return osbridge.focus_window(handle)
+
+
+def window_title(handle) -> str:
+    return osbridge.window_title(handle)
 
 from PySide6.QtCore import (QAbstractNativeEventFilter, QRectF, Qt, QTimer,  # noqa: E402
                             Signal)
-from PySide6.QtGui import (QAction, QActionGroup, QColor, QIcon,  # noqa: E402
-                           QLinearGradient, QPainter, QPainterPath, QPen, QPixmap,
+from PySide6.QtGui import (QAction, QActionGroup, QColor, QFont, QFontMetrics,  # noqa: E402
+                           QIcon, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap,
                            QRegion)
 from PySide6.QtWidgets import (QApplication, QLabel, QMenu, QPushButton,  # noqa: E402
                                QSizeGrip, QSystemTrayIcon, QWidget)
@@ -66,6 +98,67 @@ SKINS = {
     "halo":   {"size": (320, 56), "min": (260, 50), "rad": 24.0, "rim": True},
 }
 DEFAULT_SKIN = "aurora"
+# ---------- pill v4 (DESIGN.md 2026-09-15, operator picks P3 + glow +20%) ----------
+# The status word ("Listening…") sits ON the pill, UNDER the wave, as PLAIN TEXT — no capsule.
+# The capsule mocked first cost 19px of pill height (2.5 pad + 10 text + 2.5 pad + 1 border +
+# 3 gap), and that is what would have forced the wave down to a row of dots. Plain text costs 11,
+# which this pill already has to spare.
+WORD_H = 11                 # reserved at the bottom of the pill, ALWAYS
+WORD_PT = 9.0               # P3: the wave is the hero, the word is a caption
+# Reserved even with no word showing. A strip that appeared only while speaking would resize the
+# wave the instant you opened your mouth, and the 2026-07-12 rule is that the DATA moves, never
+# the chrome. With 11px reserved, halo's wave lands at 23px and aurora's at 37px — P3's 24px.
+PILL_THEMES = ("system", "dark", "light")
+# Glass body stops. Dark = the approved 2026-09-12 values, untouched. Light is the adaptive half:
+# on a light desktop the pill flips light the way every macOS panel does, instead of washing out
+# — which is exactly the failure that pushed the dark alpha up to 234-246 in the first place.
+BODY_DARK = ((46, 52, 62, 234), (27, 31, 39, 238), (16, 19, 25, 244))
+# Light glass, retoned 2026-09-15 — operator: "the light is TOO light".
+# The first values (252/243/230) came straight from the HTML mock, where the pill sits over a
+# live `backdrop-filter: blur(44px) saturate(200%)` and the wallpaper's colour bleeds through to
+# tint it. In the app acrylic is OFF by default, so the body is PAINTED with nothing behind it —
+# and a near-white paint with nothing to tint it is not glass, it is a white slab. The same
+# lesson the dark body learned on 2026-09-12, in the other direction: take a mock's numbers only
+# when the mock's backdrop is also real.
+# Mean luma drops 243 -> 220. Still unmistakably a light pill, but it is now a light GREY with
+# real top-to-bottom depth instead of paper.
+BODY_LIGHT = ((232, 234, 241, 232), (216, 219, 229, 238), (198, 202, 215, 246))
+# How much to darken the wave's colours on light glass. Saturated mint and green at full
+# brightness on a pale body have almost no contrast; the mock handled this with
+# `saturate(115%) brightness(.90)`, which is this, done in the palette instead of in CSS.
+LIGHT_FACE_GAIN = 0.78
+# v4 drops the 1px inner highlight to a half-pixel hairline: one device pixel at 200% scaling,
+# a true half-pixel on a Retina Mac — the same line, drawn correctly per screen.
+EDGE_W = 0.5
+GLOW_GAIN = 1.20            # operator 2026-09-15: "increase the glow effect by 20%"
+# The WIDER hue ramp, picked 2026-09-15 ("wider with glow, not widest") and mocked in
+# design/mocks/pill-glass-v3.html. The old face ran MINT -> SKY -> VIOLET, which is barely a
+# third of the wheel: neighbouring bars differed by a few degrees of hue and the whole block
+# read as one blue-green mass. This adds a GREEN head and a WARM tail, so adjacent bars are
+# visibly different colours — which is what "more hue difference" meant.
+WIDE_RAMP = ((0x2A, 0xF5, 0x98),    # green
+             (0x37, 0xE0, 0xC8),    # mint
+             (0x4F, 0xAC, 0xFE),    # blue
+             (0x8A, 0x7B, 0xFF),    # violet
+             (0xE0, 0x6B, 0xE6),    # magenta
+             (0xFF, 0x7B, 0xA8))    # warm pink
+
+
+def ramp_color(t: float, theme: str = "dark") -> tuple[int, int, int]:
+    """Sample WIDE_RAMP at 0..1. Linear between stops — the mock's exact interpolation.
+
+    On light glass the colours are darkened by LIGHT_FACE_GAIN, because the same mint that
+    glows against a near-black body disappears against a pale one.
+    """
+    n = len(WIDE_RAMP) - 1
+    x = min(0.9999, max(0.0, float(t))) * n
+    i = int(x)
+    f = x - i
+    a, b = WIDE_RAMP[i], WIDE_RAMP[min(n, i + 1)]
+    g = LIGHT_FACE_GAIN if theme == "light" else 1.0
+    return (int((a[0] + (b[0] - a[0]) * f) * g),
+            int((a[1] + (b[1] - a[1]) * f) * g),
+            int((a[2] + (b[2] - a[2]) * f) * g))
 # How far inside the window rectangle the window MASK (the visible silhouette) sits. The body
 # is painted past it, so the outline is always cut through solid dark interior.
 MASK_INSET = 1.5
@@ -126,7 +219,12 @@ def save_config(cfg: dict) -> None:
 # ---------- Windows: acrylic blur-behind + rounded window ----------
 def disable_window_frame(hwnd: int) -> None:
     """No acrylic: just make sure Windows adds no outline of its own. Corner rounding off
-    (the painted capsule is the shape) and the Win11 1px frame colour set to none."""
+    (the painted capsule is the shape) and the Win11 1px frame colour set to none.
+
+    macOS draws no frame of its own around a frameless Qt window, so there is nothing to
+    remove there and this is a no-op."""
+    if not IS_WINDOWS:
+        return
     try:
         d = ctypes.windll.dwmapi
         hr_c = d.DwmSetWindowAttribute(int(hwnd), 33, ctypes.byref(ctypes.c_int(1)), 4)
@@ -205,6 +303,8 @@ def parse_combo(combo: str):
         elif part.startswith("f") and part[1:].isdigit():
             vk = 0x6F + int(part[1:])
         elif len(part) == 1:
+            if not IS_WINDOWS:
+                return None      # osbridge.mac._parse_combo does this with the Mac layout
             r = ctypes.windll.user32.VkKeyScanW(ord(part))
             vk = (r & 0xFF) if r != -1 else None
         else:
@@ -220,7 +320,10 @@ class HotkeyFilter(QAbstractNativeEventFilter):
         self.callbacks: dict[int, object] = {}
 
     def nativeEventFilter(self, etype, message):
-        if etype == b"windows_generic_MSG":
+        # macOS never sends this event type, and wintypes does not exist there to read it
+        # with. osbridge.mac returns None from hotkey_filter() and drives its callbacks from
+        # a CGEventTap instead, so on a Mac this filter is simply never installed.
+        if IS_WINDOWS and etype == b"windows_generic_MSG":
             msg = wintypes.MSG.from_address(int(message))
             if msg.message == 0x0312 and msg.wParam in self.callbacks:
                 self.callbacks[msg.wParam]()
@@ -281,15 +384,22 @@ class LiveTyper(threading.Thread):
 
 
 # ---------- caret ghost ----------
-class _GTI(ctypes.Structure):
-    _fields_ = [("cbSize", wintypes.DWORD), ("flags", wintypes.DWORD),
-                ("hwndActive", wintypes.HWND), ("hwndFocus", wintypes.HWND),
-                ("hwndCapture", wintypes.HWND), ("hwndMenuOwner", wintypes.HWND),
-                ("hwndMoveSize", wintypes.HWND), ("hwndCaret", wintypes.HWND),
-                ("rcCaret", wintypes.RECT)]
+# GUITHREADINFO. Its _fields_ read wintypes in the CLASS BODY, so the definition itself has
+# to be conditional — a stub that raises on attribute access would still blow up at import.
+if IS_WINDOWS:
+    class _GTI(ctypes.Structure):
+        _fields_ = [("cbSize", wintypes.DWORD), ("flags", wintypes.DWORD),
+                    ("hwndActive", wintypes.HWND), ("hwndFocus", wintypes.HWND),
+                    ("hwndCapture", wintypes.HWND), ("hwndMenuOwner", wintypes.HWND),
+                    ("hwndMoveSize", wintypes.HWND), ("hwndCaret", wintypes.HWND),
+                    ("rcCaret", wintypes.RECT)]
 
 
 def caret_screen_pos():
+    """Win32 caret, the cheap fallback under UIA. Windows only; None elsewhere, which the
+    caller already treats as "no ghost this utterance"."""
+    if not IS_WINDOWS:
+        return None
     u32 = ctypes.windll.user32
     info = _GTI(cbSize=ctypes.sizeof(_GTI))
     if not u32.GetGUIThreadInfo(0, ctypes.byref(info)) or not info.hwndCaret:
@@ -307,6 +417,8 @@ _UIA = None
 
 def _uia():
     global _UIA
+    if not IS_WINDOWS:
+        return None          # caret_rect_uia() already treats None as "no caret, no ghost"
     if _UIA is None:
         import comtypes.client
         comtypes.client.GetModule("UIAutomationCore.dll")
@@ -387,6 +499,9 @@ class WaveWidget(QWidget):
         self.env = np.zeros(WAVE_POINTS, dtype=np.float32)
         self.bands = np.zeros(WAVE_BANDS, dtype=np.float32)
         self.phase = 0.0
+        # Set by the parent each paint. The face has to darken on light glass, and the
+        # widget paints itself, so it needs its own copy rather than reaching upward.
+        self.theme = "dark"
         self.energy = 0.2          # smoothed scalar; floors at 0.2 so it never flatlines
         self.target = 0.2
         self._t = np.linspace(0, 1, WAVE_POINTS)
@@ -489,22 +604,26 @@ class WaveWidget(QWidget):
             lvl = (0.12 + 0.88 * voice) * osc * (1.0 - d * 0.45)
             # x1.35 headroom: at normal speaking volume the centre bars reached only ~half the
             # face, which still read as timid. Clipping keeps a shout from overflowing.
-            bh = max(3.0, (h - 10) * float(np.clip(lvl * 1.35, 0.06, 1.0)))
+            # The -10 padding was set when this widget was 34px tall, where it cost 29% of the
+            # face. At the v4 height it cost 43% and was the difference between bars and dots.
+            # 4px is enough to keep a round cap off the widget edge.
+            bh = max(3.0, (h - 4) * float(np.clip(lvl * 1.35, 0.06, 1.0)))
             x = pitch * (i + 1) - bw / 2
             # No pause colours. `paused` flips on every gap between words; amber/grey bars
             # made the face blink its colour through a sentence. Colour is constant; the
             # voice shows up as HEIGHT and brightness, which is what reacting means.
-            # mock's cBar runs violet -> sky -> mint, so the bars use the RIM violet and pass
-            # through sky on the way out rather than fading straight to purple
-            mixed = (MINT, SKY, VIOLET_RIM)
-            seg = d * 2.0
-            i0 = 0 if seg < 1.0 else 1
-            f0 = seg - i0
-            a0, b0 = mixed[i0], mixed[i0 + 1]
-            c = QColor(int(a0[0] + (b0[0] - a0[0]) * f0),
-                       int(a0[1] + (b0[1] - a0[1]) * f0),
-                       int(a0[2] + (b0[2] - a0[2]) * f0),
-                       int((215 - 60 * d) * (0.55 + 0.45 * voice)))
+            # v4 (2026-09-15): colour now sweeps LEFT TO RIGHT across the whole WIDE_RAMP,
+            # the way the approved mock does, instead of mirroring MINT->SKY->VIOLET out from
+            # the centre. The old mapping was symmetric in colour AND height, so the two
+            # halves were the same few hues twice and the face read as one blue-green block.
+            # HEIGHT stays mirrored — that is what makes it read as live rather than
+            # scrolling — so only the colour is swept.
+            rgb = ramp_color(i / float(HALO_BARS - 1), self.theme)
+            # Alpha still falls off toward the ends so the centre stays the hero, but less
+            # steeply than before (60 -> 38): at the old falloff the new warm and green ends
+            # were the dimmest bars, which cancelled the extra hue they exist to show.
+            c = QColor(rgb[0], rgb[1], rgb[2],
+                       int(min(255, (235 - 38 * d) * (0.55 + 0.45 * voice))))
             p.setBrush(c)
             p.drawRoundedRect(QRectF(x, mid_y - bh / 2, bw, bh), bw / 2, bw / 2)
 
@@ -572,7 +691,8 @@ class WaveWidget(QWidget):
         # BLOOM first: the hero curve as a few wide, very faint strokes. Qt has no cheap blur
         # inside paintEvent, so stacked translucent strokes are the standard approximation.
         for width, alpha in ((13.0, 18), (8.0, 26), (4.5, 38)):
-            p.setPen(QPen(QColor(SKY[0], SKY[1], SKY[2], int(alpha * lvl)),
+            bloom = ramp_color(0.45, self.theme)
+            p.setPen(QPen(QColor(bloom[0], bloom[1], bloom[2], int(alpha * lvl)),
                           width, Qt.SolidLine, Qt.RoundCap))
             p.drawPath(hero)
 
@@ -582,18 +702,44 @@ class WaveWidget(QWidget):
                 g.setColorAt(at, QColor(rgb[0], rgb[1], rgb[2], alpha))
             return QPen(g, width, Qt.SolidLine, Qt.RoundCap)
 
-        # companions first so the hero sits ON TOP and stays the thing the eye lands on
-        p.setPen(ribbon_pen(((0.0, VIOLET), (0.5, BLUSH), (1.0, MINT)), 1.9, int(158 * glow)))
+        # v4 (2026-09-15): all three ribbons now sweep the WIDE_RAMP rather than the old
+        # three-colour set. The HERO spans the ramp end to end, so one ribbon alone shows the
+        # full green -> mint -> blue -> violet -> magenta -> warm run. The companions take
+        # offset slices of the SAME ramp, which keeps them related to the hero instead of
+        # being three unrelated gradients, while still differing from it where they cross.
+        def ramp_stops(lo: float, hi: float, n: int = 5):
+            return tuple((k / (n - 1), ramp_color(lo + (hi - lo) * k / (n - 1), self.theme))
+                         for k in range(n))
+
+        p.setPen(ribbon_pen(ramp_stops(0.55, 1.0), 1.9, int(158 * glow)))
         p.drawPath(self._smooth(wave(2.1, 0.74), w))
-        p.setPen(ribbon_pen(((0.0, SKY), (0.55, MINT), (1.0, SKY)), 1.7, int(116 * glow)))
+        p.setPen(ribbon_pen(ramp_stops(0.0, 0.45), 1.7, int(116 * glow)))
         p.drawPath(self._smooth(wave(4.2, 0.55), w))
-        p.setPen(ribbon_pen(((0.0, MINT), (0.5, SKY), (1.0, VIOLET)), 2.4, int(255 * glow)))
+        p.setPen(ribbon_pen(ramp_stops(0.0, 1.0), 2.4, int(255 * glow)))
         p.drawPath(hero)
 
 
 # ---------- glossy gray glass pill (how iOS does it: specular top edge + sheen
 # gradient on the upper third + light-top->dark-bottom depth, over the blur) -----
-def paint_pill(p, r, acrylic, rad=22.0, rim=0.0):
+def resolve_theme(name: str) -> str:
+    """"system" | "dark" | "light" -> "dark" | "light".
+
+    "system" follows the OS APPEARANCE setting, not the wallpaper. A dark OS theme over a light
+    wallpaper resolves dark, and that is correct: the user told the OS which they prefer. The
+    Dark and Light choices exist for exactly the case where the wallpaper disagrees.
+    """
+    if name == "light":
+        return "light"
+    if name == "dark":
+        return "dark"
+    try:
+        import osbridge
+        return "light" if osbridge.os_theme() == "light" else "dark"
+    except Exception:
+        return "dark"
+
+
+def paint_pill(p, r, acrylic, rad=22.0, rim=0.0, theme="dark"):
     path = QPainterPath()
     path.addRoundedRect(r, rad, rad)
     # HALO rim (skin C): the pill's own edge is the level meter. Drawn UNDER the body as
@@ -618,9 +764,14 @@ def paint_pill(p, r, acrylic, rad=22.0, rim=0.0):
         # Loudness drives glow WIDTH at a fixed, saturated alpha — never alpha alone. Any
         # colour thinned by alpha on dark glass lands at the same muted blue-grey; three rounds
         # of measurement showed every alpha-scaled layer failing the same way.
-        for step, width, alpha, scaled in ((3.4, 1.2 + 3.0 * rim, 96, True),
+        # v4: GLOW_GAIN raises BOTH the soft layer's width and its alpha by the same 20%, so the
+        # glow grows without the bright hairline changing character. Raising alpha alone would
+        # have made it denser, not larger, which is the failure this loop's comments already
+        # record. Alpha is capped at 255 — a clipped alpha would silently turn a width change
+        # into nothing at loud volume.
+        for step, width, alpha, scaled in ((3.4, (1.2 + 3.0 * rim) * GLOW_GAIN, 96 * GLOW_GAIN, True),
                                            (2.4, 1.8, 168, False)):
-            a = int(alpha * on * (1.0 if scaled else (0.75 + 0.25 * rim)))
+            a = min(255, int(alpha * on * (1.0 if scaled else (0.75 + 0.25 * rim))))
             g = QLinearGradient(r.left(), 0, r.right(), 0)
             g.setColorAt(0.0, QColor(MINT[0], MINT[1], MINT[2], a))
             g.setColorAt(0.5, QColor(SKY[0], SKY[1], SKY[2], a))
@@ -648,16 +799,18 @@ def paint_pill(p, r, acrylic, rad=22.0, rim=0.0):
         # drawn over a DARK backdrop; over a pale desktop that top stop let enough light through
         # to put a band of grey pixels (~rgb 96,104,112) along the entire top edge — measured,
         # 514 of them, every one on the top straight edge. Design for the worst backdrop.
-        body.setColorAt(0.0, QColor(46, 52, 62, 234))
-        body.setColorAt(0.46, QColor(27, 31, 39, 238))
-        body.setColorAt(1.0, QColor(16, 19, 25, 244))
+        # v4: the stops come from BODY_DARK / BODY_LIGHT so the adaptive flip is one table, not
+        # two hand-tuned copies that drift.
+        for at, col in zip((0.0, 0.46, 1.0), BODY_LIGHT if theme == "light" else BODY_DARK):
+            body.setColorAt(at, QColor(*col))
     else:
         # Painted glass (the default since 2026-09-13): the SAME approved dark stops. The old
         # values here were the July light-grey body, which would have undone the retoning the
         # moment acrylic was switched off.
-        body.setColorAt(0.0, QColor(46, 52, 62, 236))
-        body.setColorAt(0.46, QColor(27, 31, 39, 240))
-        body.setColorAt(1.0, QColor(16, 19, 25, 246))
+        # +2 alpha over the acrylic stops: with no blur behind it the body carries the whole
+        # silhouette, so it must not let a light desktop through at the edges.
+        for at, col in zip((0.0, 0.46, 1.0), BODY_LIGHT if theme == "light" else BODY_DARK):
+            body.setColorAt(at, QColor(col[0], col[1], col[2], min(255, col[3] + 2)))
     # SILHOUETTE RULE (2026-09-13 audit, after two edge fixes that did not hold): NOTHING
     # light may sit on the outline. The window mask (inset MASK_INSET) is the silhouette,
     # and the body is painted OVERSIZED past it, so every pixel the mask lets through is
@@ -678,12 +831,17 @@ def paint_pill(p, r, acrylic, rad=22.0, rim=0.0):
     # sits 4.5px below the silhouette, not 1.6: on the outline band a light streak is
     # indistinguishable from a frame (measured: it was the last grey on aurora's edge)
     streak = QRectF(r.left() + rad * 1.1, r.top() + MASK_INSET + 4.5, inner_w, r.height() * 0.5)
+    # v4: on LIGHT glass a white sheen is invisible, and the highlight that gives the capsule its
+    # top edge has to come from the other direction — a faint dark line. Same geometry, inverted
+    # ink. Both are drawn at EDGE_W, the half-pixel hairline.
+    ink = (255, 255, 255) if theme == "dark" else (120, 126, 140)
+    top_a = 46 if theme == "dark" else 30
     sheen = QLinearGradient(streak.left(), 0, streak.right(), 0)
-    sheen.setColorAt(0.0, QColor(255, 255, 255, 0))
+    sheen.setColorAt(0.0, QColor(*ink, 0))
     # dimmed while halo's rim is lit: white on top of the coloured rim desaturates both
-    sheen.setColorAt(0.5, QColor(255, 255, 255, int(46 * max(0.0, 1.0 - 2.6 * rim))))
-    sheen.setColorAt(1.0, QColor(255, 255, 255, 0))
-    p.setPen(QPen(sheen, 1.3))
+    sheen.setColorAt(0.5, QColor(*ink, int(top_a * max(0.0, 1.0 - 2.6 * rim))))
+    sheen.setColorAt(1.0, QColor(*ink, 0))
+    p.setPen(QPen(sheen, EDGE_W * 2.6))
     p.drawArc(streak, 30 * 16, 120 * 16)
     # halo's lit rim, clipped to the pill so not one pixel of it lands on bare window
     if rim_draw:
@@ -696,7 +854,7 @@ def paint_pill(p, r, acrylic, rad=22.0, rim=0.0):
     # A single soft sheen across the top only — the inner bevel and the specular arc were a
     # second and third light source on the same 40px edge, which is what made it a ring.
     streak = QRectF(r.left() + 26, r.top() + 2.0, r.width() - 52, r.height() * 0.42)
-    p.setPen(QPen(QColor(255, 255, 255, 34), 1.3))
+    p.setPen(QPen(QColor(*ink, 34 if theme == "dark" else 22), EDGE_W * 2.6))
     p.drawArc(streak, 34 * 16, 112 * 16)
 
 
@@ -824,7 +982,12 @@ class WaveFlow(QWidget):
         self._listen_t0 = 0.0
         self._worker: threading.Thread | None = None
         self._hk_filter = HotkeyFilter()
-        QApplication.instance().installNativeEventFilter(self._hk_filter)
+        # Windows delivers WM_HOTKEY through the Qt message loop, so it needs this filter.
+        # macOS delivers through a CGEventTap on its own run loop: osbridge returns None and
+        # routes its callbacks into the same dict, so there is nothing to install.
+        osbridge.set_hotkey_callback(self._on_native_hotkey)
+        if osbridge.needs_native_filter():
+            QApplication.instance().installNativeEventFilter(self._hk_filter)
 
         self._make_tray()
         self._start_hotkey()
@@ -929,8 +1092,15 @@ class WaveFlow(QWidget):
         # 60px window — so they could never grow past a row of dots no matter what the
         # level was. The numbers below are measured against the pill, not guessed: halo's
         # pill is inset 5px for its glow, so 13px clears the rim and leaves 34px of face.
-        top = 11 if sk["rim"] else 10
-        self.wave.setGeometry(30, top, w - 60, max(16, h - top * 2))
+        # v4 (2026-09-15): the top inset was 11/10 when the wave owned the pill's full height.
+        # WORD_H now takes 11px off the BOTTOM, and keeping the old inset as well left halo a
+        # 23px face — which its own -4 bar padding cut to 13px of bar. That is a row of dots at
+        # ANY volume, the precise failure this file has already recorded once. The inset pays
+        # for the word instead of the wave paying twice. 6px still clears halo's inward rim
+        # bloom (~3.4px).
+        top = 6 if sk["rim"] else 7
+        # Reserved whether or not a word is showing, so the wave never resizes mid-sentence.
+        self.wave.setGeometry(30, top, w - 60, max(16, h - top * 2 - WORD_H))
         self.btn_close.move(w - 30, 6)
         self.btn_mic.move(w - 58, 6)
         self.grip.move(w - 18, h - 18)
@@ -983,11 +1153,12 @@ class WaveFlow(QWidget):
             # invisible anyway. Without it the window is a per-pixel-alpha layer: the capsule
             # IS the window, with antialiased edges and nothing around it.
             if self.cfg.get("acrylic", False):
-                self._acrylic = enable_liquid_glass(self.winId())
+                self._acrylic = osbridge.enable_glass(
+                    int(self.winId()), resolve_theme(self.cfg.get("pill_theme", "system")))
                 self._apply_pill_mask()
             else:
                 self._acrylic = False
-                disable_window_frame(self.winId())
+                osbridge.make_frameless(int(self.winId()))
                 self.clearMask()
             self.update()
 
@@ -1002,8 +1173,13 @@ class WaveFlow(QWidget):
         # the "grey border": not a stroke, not Windows' frame, just the acrylic showing
         # where nothing was painted over it. The glow now blooms INWARD instead.
         r = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        theme = resolve_theme(self.cfg.get("pill_theme", "system"))
+        if self.wave.theme != theme:
+            self.wave.theme = theme
+            self.wave.update()          # the face repaints itself; it is a separate widget
         paint_pill(p, r, self._acrylic, sk["rad"],
-                   self.wave.rim_energy() if sk["rim"] else 0.0)
+                   self.wave.rim_energy() if sk["rim"] else 0.0, theme)
+        self._paint_word(p, r, theme)
 
         if self._hover:  # grip-dot move handle, left edge
             p.setPen(Qt.NoPen)
@@ -1014,6 +1190,60 @@ class WaveFlow(QWidget):
                 for col in range(2):
                     p.drawEllipse(QRectF(cx - 5 + col * 7, cy0 + row * 9, 2.6, 2.6))
         p.end()
+
+    # ---- v4: the status word, on the pill, under the wave ----
+    # The word is driven by `state`, not set by hand at each site. There are six places that
+    # assign state; wiring six call sites would mean the seventh is added without a word and
+    # the pill quietly lies about what it is doing. A property cannot be bypassed.
+    STATE_WORDS = {"idle": "", "listening": "Listening…", "finalizing": "Thinking…",
+                   "typing": "Typing…", "offline": "No server"}
+
+    @property
+    def state(self) -> str:
+        return getattr(self, "_state", "idle")
+
+    @state.setter
+    def state(self, value: str) -> None:
+        self._state = value
+        self.set_word(self.STATE_WORDS.get(value, ""))
+
+    def set_word(self, text: str) -> None:
+        """Set the caption under the wave. "" means show nothing at all.
+
+        Nothing else may touch `_word`. Going through one setter is what guarantees the repaint
+        happens and that an unchanged word costs no frames.
+        """
+        text = text or ""
+        if text != getattr(self, "_word", ""):
+            self._word = text
+            self.update()
+
+    def _paint_word(self, p, r, theme: str) -> None:
+        """Plain text, no capsule, centred in the WORD_H strip at the bottom of the pill.
+
+        Three rules, all from the 2026-07-12 invariants:
+          * nothing is drawn while idle — the face is a bare wave until something is happening;
+          * the pill NEVER resizes for a longer word, so the text is elided instead;
+          * nothing animates in. The data moves; the chrome does not.
+        """
+        word = getattr(self, "_word", "")
+        if not word:
+            return
+        f = QFont(self.font())
+        f.setPointSizeF(WORD_PT)
+        f.setWeight(QFont.Medium)
+        p.setFont(f)
+        col = QColor(255, 255, 255, 168) if theme == "dark" else QColor(0, 0, 0, 140)
+        p.setPen(col)
+        # Centre the word in the gap BETWEEN the wave and the bottom edge, rather than pinning
+        # it 1.5px off the bottom. Pinned, it sat hard against the rounded edge and read as
+        # falling off the pill (operator, 2026-09-15: "the listening is to low on the pill").
+        # Measuring from the wave keeps it correct at any pill height or skin.
+        gap_top = self.wave.geometry().bottom() if hasattr(self, "wave") else r.bottom() - WORD_H
+        strip = QRectF(r.left() + 12, gap_top + (r.bottom() - gap_top - WORD_H) / 2.0,
+                       r.width() - 24, WORD_H)
+        text = QFontMetrics(f).elidedText(word, Qt.ElideRight, int(strip.width()))
+        p.drawText(strip, Qt.AlignHCenter | Qt.AlignVCenter, text)
 
     # ---- hover reveal ----
     def enterEvent(self, _):
@@ -1107,12 +1337,26 @@ class WaveFlow(QWidget):
             lambda r: self._summon() if r == QSystemTrayIcon.Trigger else None)
         self.tray.show()
 
+    def _on_native_hotkey(self, hotkey_id: int, pressed: bool) -> None:
+        """Called by osbridge.mac FROM THE EVENT-TAP THREAD, never by Windows.
+
+        Qt widgets may only be touched on the GUI thread, so this does nothing but
+        look up the same callback the Windows filter would have run — and those
+        callbacks only emit a Signal, which IS thread-safe and hops to the GUI
+        thread by itself. Key-DOWN only: the app toggles, it is not push-to-talk.
+        """
+        cb = self._hk_filter.callbacks.get(hotkey_id)
+        if cb and pressed:
+            cb()
+
     def _start_hotkey(self):
         """SYSTEM-registered hotkeys via Win32 RegisterHotKey (reliable across apps,
         including elevated windows — unlike the keyboard-hook approach it replaces)."""
-        u32 = ctypes.windll.user32
+        # Registration goes through osbridge: Windows uses RegisterHotKey and delivers
+        # WM_HOTKEY into this Qt loop, macOS uses a CGEventTap and calls back from its own
+        # thread. Both end up invoking the same callbacks dict.
         for hid in list(self._hk_filter.callbacks):
-            u32.UnregisterHotKey(None, hid)
+            osbridge.unregister_hotkey(hid)
         self._hk_filter.callbacks.clear()
         results = {}
         # ONE control: ctrl+alt+w summons+listens, pressed again commits+hides.
@@ -1121,25 +1365,33 @@ class WaveFlow(QWidget):
             if not combo:
                 results[name] = "disabled"
                 continue
-            parsed = parse_combo(combo)
-            if not parsed:
-                results[name] = f"unparseable: {combo}"
-                continue
-            mods, vk = parsed
-            if u32.RegisterHotKey(None, hid, mods | 0x4000, vk):  # MOD_NOREPEAT
+            # osbridge parses the combo for the platform it is on: Windows via parse_combo +
+            # RegisterHotKey, macOS via its own layout-aware table + CGEventTap. Parsing here
+            # would mean two parsers, one of which is always wrong on the other OS.
+            if osbridge.register_hotkey(hid, combo):
                 self._hk_filter.callbacks[hid] = (
                     lambda n=name, s=sig: (log.info("hotkey FIRED: %s", n), s.emit()))
                 results[name] = combo
+            elif IS_WINDOWS and not parse_combo(combo):
+                results[name] = f"unparseable: {combo}"
             else:
-                results[name] = f"IN USE by another app: {combo}"
-                self.error_sig.emit(f"Hotkey '{combo}' is taken — pick another in ⚙ Settings")
-        log.info("hotkeys (RegisterHotKey): %s", results)
+                # Windows: another app already owns the chord. macOS: almost always Input
+                # Monitoring not granted — a permission problem, not a clash, and telling the
+                # user to "pick another key" there would send them hunting for nothing.
+                if IS_WINDOWS:
+                    results[name] = f"IN USE by another app: {combo}"
+                    self.error_sig.emit(f"Hotkey '{combo}' is taken — pick another in ⚙ Settings")
+                else:
+                    results[name] = f"refused: {combo}"
+                    self.error_sig.emit("Hotkey needs permission — grant WaveFlow "
+                                        "Input Monitoring in System Settings → Privacy & Security")
+        log.info("hotkeys (%s): %s", "RegisterHotKey" if IS_WINDOWS else "CGEventTap", results)
 
     def _capture_target(self):
         """Remember the window that had focus when dictation began, so the text
         lands THERE even if focus drifts during the STT round trip (text once
         went into the Start-search because focus moved while waiting)."""
-        hwnd = ctypes.windll.user32.GetForegroundWindow()
+        hwnd = osbridge.foreground_window()
         if hwnd and hwnd != int(self.winId()):
             self._target_hwnd = hwnd
 
@@ -1530,13 +1782,20 @@ class WaveFlow(QWidget):
         """
         if getattr(self.args, "replay", "") or self.args.demo:
             return 0
-        u = ctypes.windll.user32
-        fg = u.GetForegroundWindow()
+        fg = osbridge.foreground_window()
         if not fg:
             return 0
-        pid = ctypes.c_ulong()
-        u.GetWindowThreadProcessId(fg, ctypes.byref(pid))
-        if pid.value != ctypes.windll.kernel32.GetCurrentProcessId():
+        # "is the focused window MINE?" On Windows the handle is an HWND and the answer
+        # needs its owning PID; on macOS osbridge already returns a PID, so comparing to
+        # our own is the same question asked directly.
+        if IS_WINDOWS:
+            u = ctypes.windll.user32
+            pid = ctypes.c_ulong()
+            u.GetWindowThreadProcessId(fg, ctypes.byref(pid))
+            other = pid.value != ctypes.windll.kernel32.GetCurrentProcessId()
+        else:
+            other = int(fg) != os.getpid()
+        if other:
             self._target_hwnd = fg          # remembered as the last REAL window the user used
             return fg
         if (fg == getattr(self, "_own_hwnd", 0) and self._target_hwnd
@@ -1897,10 +2156,9 @@ class WaveFlow(QWidget):
         if getattr(self.args, "replay", "") or self.args.demo:
             log.info("REPLAY would-type-segment(%s): %r", reason, text)
             return
-        u = ctypes.windll.user32
-        if self._target_hwnd and u.GetForegroundWindow() != self._target_hwnd:
+        if self._target_hwnd and osbridge.foreground_window() != self._target_hwnd:
             focus_window(self._target_hwnd)
-        if self._target_hwnd and u.GetForegroundWindow() != self._target_hwnd:
+        if self._target_hwnd and osbridge.foreground_window() != self._target_hwnd:
             log.info("segment(%s): target not focused — skipped %r", reason, text)
             return
         send_text((" " if self._typed_any else "") + text)

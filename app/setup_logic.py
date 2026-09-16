@@ -46,9 +46,21 @@ def is_app_folder(p: Path) -> bool:
 SAMPLE_WAV = Path(__file__).resolve().parent / "assets" / "sample.wav"
 SAMPLE_TEXT = "send it"
 
-OPTIONS = ["local", "docker", "onsite", "vps"]
-OPTION_NAMES = {"local": "This PC — background app", "docker": "This PC — Docker",
-                "onsite": "Onsite server", "vps": "Offsite VPS"}
+IS_WINDOWS = sys.platform == "win32"
+IS_MAC = sys.platform == "darwin"
+
+OPTIONS = ["local", "docker", "onsite", "vps", "connect"]
+OPTION_NAMES = {"local": ("This Mac — background app" if IS_MAC else "This PC — background app"),
+                "docker": ("This Mac — Docker" if IS_MAC else "This PC — Docker"),
+                "onsite": "Onsite server", "vps": "Offsite VPS",
+                "connect": "Connect to a server I already run"}
+# The four above INSTALL a server. "connect" is the opposite: the engine is already running, so
+# setup writes nothing, runs nothing and installs nothing — it saves an address and a token and
+# tests them. Anything that acts on an install must exclude it, so those sets are named here
+# instead of being spelled out at each call site (that is how "vps" got missed once already).
+INSTALL_OPTIONS = ["local", "docker", "onsite", "vps"]
+REMOTE_OPTIONS = ["onsite", "vps", "connect"]            # server elsewhere: needs an address
+TOKEN_OPTIONS = ["docker", "onsite", "vps", "connect"]   # everything but the loopback local app
 ENGINES = ["onnx-cpu", "onnx-gpu", "nemo"]
 ENGINE_NAMES = {"onnx-cpu": "ONNX · CPU", "onnx-gpu": "ONNX · GPU", "nemo": "NeMo · NVIDIA GPU"}
 # Docker service + host port per engine. Distinct ports so engines can run side by side.
@@ -65,13 +77,34 @@ def performance_cores() -> tuple[int, int]:
     with all 24 threads ran ~4x slower than with 4. Windows reports an EfficiencyClass per core;
     the highest class is the performance cores. A non-hybrid CPU has one class = every core.
     """
-    if sys.platform == "win32":
+    if IS_WINDOWS:
         try:
             return _win_cores()
         except Exception:
             pass
+    if IS_MAC:
+        try:
+            return _mac_cores()
+        except Exception:
+            pass
     n = os.cpu_count() or 4
     return max(1, n // 2), max(1, n // 2)       # assume SMT; never count hyperthreads
+
+
+def _mac_cores() -> tuple[int, int]:
+    """Apple Silicon splits cores the same way a hybrid Intel does, and macOS names them:
+    hw.perflevel0.physicalcpu is the PERFORMANCE cores, perflevel1 the efficiency ones.
+    An Intel Mac has no perflevel keys, so hw.physicalcpu is the answer there.
+
+    The //2 fallback would be wrong on Apple Silicon in particular: it has no hyperthreading,
+    so halving the count throws away half the real cores and the engine runs at half speed.
+    """
+    def sysctl(key):
+        r = subprocess.run(["sysctl", "-n", key], capture_output=True, text=True, timeout=5)
+        return int(r.stdout.strip()) if r.returncode == 0 and r.stdout.strip() else 0
+    total = sysctl("hw.physicalcpu") or (os.cpu_count() or 4)
+    perf = sysctl("hw.perflevel0.physicalcpu") or total
+    return max(1, perf), max(1, total)
 
 
 def _win_cores() -> tuple[int, int]:
@@ -121,11 +154,20 @@ def onnx_providers() -> list[str]:
         return []
 
 
-def directml_install_commands() -> list[list[str]]:
-    """Swap the CPU build of onnxruntime for the DirectML build (they cannot be installed together)."""
+def gpu_install_commands() -> list[list[str]]:
+    """Swap the CPU build of onnxruntime for this OS's GPU build.
+
+    They cannot be installed side by side, hence the uninstall first. The package differs by
+    OS: onnxruntime-directml on Windows, onnxruntime-silicon on a Mac.
+    """
     py = sys.executable
+    pkg = "onnxruntime-silicon" if IS_MAC else "onnxruntime-directml"
     return [[py, "-m", "pip", "uninstall", "-y", "onnxruntime"],
-            [py, "-m", "pip", "install", "onnxruntime-directml"]]
+            [py, "-m", "pip", "install", pkg]]
+
+
+# Kept so nothing that already imports the old name breaks.
+directml_install_commands = gpu_install_commands
 
 
 def _runs(cmd: list[str], timeout: float = 6) -> bool:
@@ -142,7 +184,8 @@ def _runs(cmd: list[str], timeout: float = 6) -> bool:
 class Hardware:
     perf_cores: int = 4
     all_cores: int = 4
-    directml: bool = False
+    directml: bool = False          # Windows: any DirectX 12 GPU
+    coreml: bool = False            # macOS: Apple Silicon or an Intel Mac's GPU
     cuda: bool = False
     docker: bool = False
     nvidia: bool = False
@@ -151,7 +194,9 @@ class Hardware:
 def detect() -> Hardware:
     p, a = performance_cores()
     prov = onnx_providers()
-    return Hardware(perf_cores=p, all_cores=a, directml="DmlExecutionProvider" in prov,
+    return Hardware(perf_cores=p, all_cores=a,
+                    directml="DmlExecutionProvider" in prov,
+                    coreml="CoreMLExecutionProvider" in prov,
                     cuda="CUDAExecutionProvider" in prov,
                     docker=_runs(["docker", "version", "--format", "{{.Server.Version}}"]),
                     nvidia=_runs(["nvidia-smi", "-L"]))
@@ -168,15 +213,32 @@ class EngineChoice:
 
 
 def engines_for(option: str, method: str, hw: Hardware) -> list[EngineChoice]:
-    """All three engines for an install option. None is ever omitted."""
+    """All three engines for an install option. None is ever omitted.
+
+    "connect" returns NOTHING on purpose: the server is already running, so it has already decided
+    which engine it uses. Offering a choice there would be a lie — picking one would change nothing.
+    The wizard reads an empty list as "skip the Engine step".
+    """
     out = []
+    if option == "connect":
+        return out
     if option == "local":
         out.append(EngineChoice("onnx-cpu", ENGINE_NAMES["onnx-cpu"],
                                 f"int8 · 660 MB · {hw.perf_cores} performance cores", True))
-        out.append(EngineChoice("onnx-gpu", ENGINE_NAMES["onnx-gpu"],
-                                "fp32 · 2.4 GB · DirectML (any DirectX 12 GPU)", True,
-                                "" if hw.directml else
-                                "needs GPU support installed: pip install onnxruntime-directml"))
+        # The GPU story is per-OS and saying the wrong one is worse than saying none: DirectML
+        # does not exist on a Mac, and CoreML does not exist on Windows. Same engine, different
+        # accelerator, different install.
+        if IS_MAC:
+            out.append(EngineChoice("onnx-gpu", ENGINE_NAMES["onnx-gpu"],
+                                    "fp32 · 2.4 GB · CoreML (Apple Silicon or Intel Mac)",
+                                    hw.coreml,
+                                    "" if hw.coreml else
+                                    "needs GPU support installed: pip install onnxruntime-silicon"))
+        else:
+            out.append(EngineChoice("onnx-gpu", ENGINE_NAMES["onnx-gpu"],
+                                    "fp32 · 2.4 GB · DirectML (any DirectX 12 GPU)", True,
+                                    "" if hw.directml else
+                                    "needs GPU support installed: pip install onnxruntime-directml"))
         out.append(EngineChoice("nemo", ENGINE_NAMES["nemo"], "max quality", False,
                                 "needs Docker — choose “This PC — Docker”"))
     elif option == "docker":
@@ -192,7 +254,7 @@ def engines_for(option: str, method: str, hw: Hardware) -> list[EngineChoice]:
         venv = option == "onsite" and method == "venv"
         out.append(EngineChoice("onnx-cpu", ENGINE_NAMES["onnx-cpu"], "int8 · 660 MB · any 4+ core CPU", True))
         out.append(EngineChoice("onnx-gpu", ENGINE_NAMES["onnx-gpu"],
-                                "fp32 · CUDA (Linux, NVIDIA) or DirectML (Windows)", True))
+                                "fp32 · CUDA (Linux, NVIDIA), DirectML (Windows) or CoreML (Mac)", True))
         out.append(EngineChoice("nemo", ENGINE_NAMES["nemo"], "max quality · 1.6 GB VRAM",
                                 not venv, "needs Docker — choose Docker as the install method" if venv else ""))
     return out
@@ -229,7 +291,12 @@ def models_dir() -> Path:
 def server_args(c: Choices, host: str = "127.0.0.1", port: int = 8756) -> list[str]:
     """parakeet_server.py arguments for an ONNX engine (local app or venv)."""
     if c.engine == "onnx-gpu":
-        dev = "dml" if (c.option == "local" or sys.platform == "win32") else "cuda"
+        # Local means THIS machine, so the accelerator is this machine's. A remote server is
+        # assumed to be Linux+NVIDIA, which is what the Docker images build for.
+        if c.option == "local":
+            dev = "coreml" if IS_MAC else "dml"
+        else:
+            dev = "dml" if IS_WINDOWS else "cuda"
         a = ["--engine", "onnx", "--onnx-quant", "fp32", "--device", dev]
     else:
         a = ["--engine", "onnx", "--onnx-quant", "int8", "--device", "cpu",
@@ -252,10 +319,18 @@ class Plan:
 def build_plan(c: Choices) -> Plan:
     th = clamp_threads(c.threads)
     engine_cfg = {"mode": c.option, "engine": c.engine, "threads": th, "auto_threads": c.auto_threads}
+    if c.option == "connect":
+        # Nothing is written and nothing is run. No .env, no compose command, no engine and no
+        # thread count — those all belong to whoever started that server, and guessing them here
+        # would put wrong numbers in config.json and wrong claims on the Finish page.
+        url = normalize_url(c.address)
+        return Plan(url, c.token, {"url": url, "token": c.token, "engine": {"mode": "connect"}},
+                    commands=[], where="Nothing is installed")
     if c.option == "local":
         url = "http://127.0.0.1:8756"
         cmd = "parakeet_server.py " + " ".join(server_args(c))
-        engine_cfg.update({"device": "dml" if c.engine == "onnx-gpu" else "cpu"})
+        engine_cfg.update({"device": ("coreml" if IS_MAC else "dml")
+                           if c.engine == "onnx-gpu" else "cpu"})
         return Plan(url, "", {"url": url, "token": "", "engine": engine_cfg},
                     commands=[cmd], run_here=True, where="The app runs the engine")
     if c.option == "docker":
@@ -309,7 +384,7 @@ def choices_from_config(cfg: dict) -> Choices:
     return Choices(option=mode, engine=e.get("engine", "onnx-cpu") if e.get("engine") in ENGINES else "onnx-cpu",
                    method=e.get("method", "docker"), threads=clamp_threads(e.get("threads", 4)),
                    auto_threads=e.get("auto_threads", True),
-                   address=cfg.get("url", "") if mode in ("onsite", "vps") else "", token=cfg.get("token", ""))
+                   address=cfg.get("url", "") if mode in REMOTE_OPTIONS else "", token=cfg.get("token", ""))
 
 
 def replace_env_value(text: str, key: str, value: str) -> str:
@@ -340,6 +415,13 @@ def rotation_plan(cfg: dict, new: str) -> Rotation:
     c = choices_from_config(cfg)
     if c.option == "local":
         return Rotation("none")
+    if c.option == "connect":
+        # We did not install that server, so we do not know whether it runs under Docker, a venv or
+        # something else. Printing a compose command we cannot stand behind would be worse than
+        # saying plainly that the change happens there.
+        return Rotation("server", commands=[
+            f"# Set WAVEFLOW_TOKEN={new} on your server,",
+            "# then restart it. WaveFlow saves this token at the same moment."])
     c.token = new
     plan = build_plan(c)
     if c.option == "docker":
@@ -500,8 +582,13 @@ def _ps_quote(s: str) -> str:
 
 
 def create_shortcuts() -> list[str]:
-    """Create/refresh the Start menu and desktop shortcuts. Returns error lines."""
-    if sys.platform != "win32":
+    """Create/refresh the Start menu and desktop shortcuts. Returns error lines.
+
+    macOS does not do shortcuts: an .app IS the icon, and the user drags it to /Applications
+    or the Dock themselves. Making files on their Desktop uninvited would be rude, so this
+    does nothing there and the wizard hides the row.
+    """
+    if not IS_WINDOWS:
         return []
     prog, args = launch_parts()
     icon = Path(sys.executable) if FROZEN else ROOT / "app" / "assets" / "waveflow.ico"   # the .exe carries it
@@ -543,8 +630,9 @@ def shortcuts_ours() -> list[Path]:
 
 
 def autostart_enabled() -> bool:
-    if sys.platform != "win32":
-        return False
+    if not IS_WINDOWS:
+        import osbridge
+        return osbridge.autostart_enabled()      # macOS: a LaunchAgent plist
     import winreg
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as k:
@@ -554,8 +642,14 @@ def autostart_enabled() -> bool:
 
 
 def set_autostart(on: bool) -> None:
-    """Only this user's Run entry named WaveFlow; nothing machine-wide."""
-    if sys.platform != "win32":
+    """Only this user's Run entry named WaveFlow; nothing machine-wide.
+
+    macOS has no registry: osbridge writes a LaunchAgent plist in the user's own
+    ~/Library/LaunchAgents, which needs no admin rights either.
+    """
+    if not IS_WINDOWS:
+        import osbridge
+        osbridge.set_autostart(on)
         return
     import winreg
     with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE) as k:
@@ -592,10 +686,27 @@ def is_public_host(host: str) -> bool:
 def validate(c: Choices) -> list[str]:
     """Problems that block Continue. Empty list = OK."""
     errs = []
-    if c.option in ("docker", "onsite", "vps") and len(c.token) < 16:
+    if c.option == "connect":
+        # A token is OPTIONAL here, and that is the whole point of this mode. The other options
+        # install the server, so they set the token and can insist on one. We install nothing:
+        # the server was started by the operator, possibly with no WAVEFLOW_TOKEN at all, and
+        # demanding a token we cannot create would lock him out of his own machine.
+        # (Found 2026-09-15: the operator's own LAN box runs tokenless.)
+        if c.token and len(c.token) < 16:
+            errs.append("That token looks too short. Copy the server's WAVEFLOW_TOKEN exactly, "
+                        "or clear the box if the server has no token.")
+        if not c.token:
+            host = urlparse(normalize_url(c.address)).hostname or ""
+            if is_public_host(host):
+                # No token on a private LAN or Tailscale address is the operator's business. On a
+                # PUBLIC address it means anyone who finds the port can send audio to the engine,
+                # and that is not a warning, it is a refusal.
+                errs.append("A server on a public address must have a token — without one, anyone "
+                            "who finds it can use it. Start it with WAVEFLOW_TOKEN set.")
+    elif c.option in TOKEN_OPTIONS and len(c.token) < 16:
         errs.append("A token of at least 16 characters is required.")
-    if c.option in ("onsite", "vps") and not c.address.strip():
-        errs.append("Enter the server address." if c.option == "onsite" else "Enter your domain.")
+    if c.option in REMOTE_OPTIONS and not c.address.strip():
+        errs.append("Enter your domain." if c.option == "vps" else "Enter the server address.")
     if c.option == "vps" and c.address.strip().lower().startswith("http://"):
         errs.append("A VPS must use https:// — audio would cross the internet unencrypted.")
     if c.option == "onsite" and c.method == "venv" and c.engine == "nemo":
@@ -607,10 +718,16 @@ def validate(c: Choices) -> list[str]:
 
 def warnings(c: Choices) -> list[str]:
     w = []
-    if c.option == "onsite" and c.address:
-        host = urlparse(normalize_url(c.address)).hostname or ""
-        if urlparse(normalize_url(c.address)).scheme == "http" and is_public_host(host):
-            w.append("This looks like a public address. Plain http sends audio unencrypted — use the VPS option.")
+    if c.option in ("onsite", "connect") and c.address:
+        u = urlparse(normalize_url(c.address))
+        if u.scheme == "http" and is_public_host(u.hostname or ""):
+            w.append("This looks like a public address. Plain http sends audio unencrypted — "
+                     "put the server behind https, or reach it over Tailscale or a VPN.")
+    if c.option == "connect":
+        if not c.token and c.address:
+            w.append("This server has no token, so anything that can reach that address can use "
+                     "it. Fine on a private LAN or Tailscale; set WAVEFLOW_TOKEN if that changes.")
+        return w        # no engine or thread advice: those belong to the server, not to us
     if c.engine == "onnx-cpu" and not c.auto_threads:
         w.append("More threads than performance cores is usually slower, not faster.")
     return w

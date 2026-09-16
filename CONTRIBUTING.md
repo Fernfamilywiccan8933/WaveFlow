@@ -8,7 +8,7 @@ By sending a pull request you agree that:
 
 1. You wrote the change, or you have the right to send it.
 2. Your change is licensed to this project under **GPL-3.0**, like the rest of the code.
-3. You also grant the project owner (MrAbookah) the right to release your change under other
+3. You also grant the project owner (Ryan "MrAbookah" Beck) the right to release your change under other
    licence terms in future versions of WaveFlow. You keep your own copyright on what you wrote.
 
 Point 3 is what lets the project change licence later, or offer a paid licence to a company,

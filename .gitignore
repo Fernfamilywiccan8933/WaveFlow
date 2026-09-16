@@ -31,3 +31,9 @@ vocab.user.json
 
 # this copy's own models, logs, docker .env
 data/
+
+# Personal settings, written by the app at runtime (mic name, server address, token).
+# config.example.json is the template that ships; this one is yours and stays local.
+app/config.json
+dist/config.json
+dist/**/config.json

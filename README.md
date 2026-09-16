@@ -2,13 +2,80 @@
   <img src="docs/banner.png" alt="WaveFlow — private, local voice dictation" width="880">
 </p>
 
-Private, local voice dictation for Windows. Press a hotkey, talk, and the words type live into
-whatever text box has focus. Speech recognition runs on **your** hardware — this PC, a server
-in your house, or your own VPS. Nothing goes to a cloud service.
+Private, local voice dictation. Press a hotkey, talk, and the words type live into whatever text
+box has focus. Speech recognition runs on **your** hardware — this machine, a server in your
+house, or your own VPS. Nothing goes to a cloud service.
 
 Engine: NVIDIA **Parakeet TDT 0.6B v2** (English), via ONNX Runtime (default) or NVIDIA NeMo.
 
-> Status: v1. Windows client only. English only.
+> Status: v1. The Windows client is tested and in daily use. The **macOS client is new and has
+> not been confirmed on real hardware** — it builds and starts, but nobody has yet verified that
+> it types. Reports welcome. English only.
+
+---
+
+## Get it
+
+### Windows — download and run
+
+[**Download WaveFlow.exe**](../../releases/latest), then double-click it. Nothing else to install.
+
+To check the download is the file this repo published:
+
+```powershell
+Get-FileHash .\WaveFlow.exe -Algorithm SHA256
+```
+
+Compare the result with `WaveFlow.exe.sha256` beside the download.
+
+### macOS — one command
+
+Paste this whole block into Terminal:
+
+```bash
+git clone https://github.com/MrAbookah/WaveFlow.git && cd WaveFlow && python3 -m venv venv && venv/bin/pip install -r requirements.txt pyobjc-framework-Cocoa pyobjc-framework-Quartz pyobjc-framework-ApplicationServices && venv/bin/python app/waveflow.py
+```
+
+The setup wizard opens. It knows it is on a Mac and offers the engines that exist there.
+
+**macOS asks for three permissions, and the app can do nothing without them:**
+
+| Permission | What it is for |
+|---|---|
+| Microphone | to hear you |
+| Accessibility | to type the words into the app you are using |
+| Input Monitoring | to notice your hotkey while another app is in front |
+
+The wizard's last page lists them with a button to each settings page.
+
+> **After an update, re-grant two of them.** WaveFlow is not signed by a paid Apple developer
+> account, and macOS ties Accessibility and Input Monitoring to the exact app file — so it forgets
+> them whenever that file changes. This is macOS behaviour, not a fault in WaveFlow.
+
+To build a double-clickable `WaveFlow.app` instead of running from the terminal:
+
+```bash
+venv/bin/python app/build.py
+```
+
+Gatekeeper blocks the first double-click on an unsigned app. Right-click it and choose **Open**
+once; after that it opens normally.
+
+### Or have an AI install it
+
+Paste this into Claude Code, Cursor, or any AI terminal assistant:
+
+```text
+Install WaveFlow from https://github.com/MrAbookah/WaveFlow on this machine.
+Read its README first and follow the section for my operating system.
+Create the virtual environment inside the cloned folder, never system-wide.
+On macOS also install the three pyobjc frameworks the README names, then tell me
+exactly which system permissions I must grant by hand - you cannot grant them for
+me. Do not change any of my existing settings or install anything globally.
+When the setup wizard opens, stop and hand it back to me.
+```
+
+---
 
 ## Why WaveFlow
 
@@ -24,7 +91,8 @@ have to: point it at a box that has the GPU, and dictate from a thin laptop.
 | Removing it | leaves files behind | lists everything it installed, removes only that, server included |
 | Numbers in this README | "3x faster" | measured, with the commands to repeat them |
 
-It is GPL-3.0, English-only, Windows-only today, and the engine is NVIDIA Parakeet TDT 0.6B v2 —
+It is GPL-3.0 and English-only. The Windows client is proven; the macOS client is new and
+unconfirmed. The engine is NVIDIA Parakeet TDT 0.6B v2 —
 not Whisper.
 
 ## What it looks like
@@ -219,12 +287,26 @@ folder, so ticking the app folder removes it too — the list says so).
 
 Without the app: `venv\Scripts\python app\uninstall.py --dry-run` lists the same steps.
 
-## Build the .exe
+## Build it yourself
+
+One script for both platforms — it detects which one it is on.
 
 ```powershell
 venv\Scripts\pip install pyinstaller
-venv\Scripts\python app\build.py      # -> dist\WaveFlow.exe
+venv\Scripts\python app\build.py       # -> dist\WaveFlow.exe (one file, nothing to install)
 ```
+
+```bash
+venv/bin/pip install pyinstaller
+venv/bin/python app/build.py           # -> dist/WaveFlow.app
+```
+
+On macOS the result is an `.app` bundle rather than a single file. macOS ties Accessibility and
+Input Monitoring to a fixed path, and a one-file build unpacks to a new temporary folder on every
+launch — so those permissions would have to be granted again every single time.
+
+Add `--dist <folder>` to build somewhere other than `dist/`, so a test build cannot overwrite a
+release.
 
 ## Tests
 

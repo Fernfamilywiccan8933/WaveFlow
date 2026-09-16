@@ -216,7 +216,7 @@ class SettingsWindow(QDialog):
         f, v = card("Server", self.conn_pill)
         row(v, "Runs on", "chosen in setup", lbl(S.OPTION_NAMES[self.c.option], "rowt", wrap=False))
         self.addr = QLineEdit(self.cfg.get("url", ""))
-        remote = self.c.option in ("onsite", "vps")
+        remote = self.c.option in S.REMOTE_OPTIONS
         self.addr.setReadOnly(not remote)
         opn = QPushButton("Open")
         opn.setObjectName("pill")
@@ -238,7 +238,8 @@ class SettingsWindow(QDialog):
 
         f, v = card("Access token")
         if self.c.option == "local":
-            v.addWidget(lbl("This PC mode listens only on this PC, so it needs no token.", "hint"))
+            _h = "Mac" if S.IS_MAC else "PC"
+            v.addWidget(lbl(f"This {_h} mode listens only on this {_h}, so it needs no token.", "hint"))
         else:
             has_token = bool(self.cfg.get("token"))
             if not has_token:
@@ -297,7 +298,7 @@ class SettingsWindow(QDialog):
             w.setStyleSheet(style)
 
     def _address(self) -> str:
-        if self.c.option not in ("onsite", "vps"):
+        if self.c.option not in S.REMOTE_OPTIONS:
             return self.cfg.get("url", "")
         port = S.DOCKER_SERVICE.get(self.c.engine, ("", 8756))[1]
         return S.normalize_url(self.addr.text(), https=self.c.option == "vps", default_port=port) \
@@ -403,7 +404,12 @@ class SettingsWindow(QDialog):
             cd.clicked.connect(lambda _=False, k=e.engine: setattr(self.c, "engine", k))
             v.addWidget(cd)
             self.eng_cards.append(cd)
-        if not editable:
+        if self.c.option == "connect":
+            # engines_for() returned nothing on purpose — see setup_logic. Saying "use Run setup
+            # again" here would be a lie: setup cannot change an engine on a server it never touched.
+            v.addWidget(lbl("You run this server yourself, so it chose its own engine. WaveFlow only "
+                            "sends audio to it. To change the engine, change it on that server.", "warn"))
+        elif not editable:
             v.addWidget(lbl("This engine runs in Docker or on your server. To change it, use Run setup again…",
                             "warn"))
         v.addStretch(1)
@@ -466,12 +472,29 @@ class SettingsWindow(QDialog):
         self.silence.setValue(float(self.cfg.get("silence_commit_s", 6.0)))
         row(v, "Stop after silence", "the overlay closes after this much quiet", self.silence)
         self.autostart = Toggle(S.autostart_enabled())
-        row(v, "Start with Windows", "only for your Windows account", self.autostart)
+        # macOS has no registry Run key: osbridge writes a LaunchAgent in the user's own
+        # ~/Library/LaunchAgents, so the promise "only for your account" holds on both.
+        _boot = "Start at login" if S.IS_MAC else "Start with Windows"
+        _who = "only for your macOS account" if S.IS_MAC else "only for your Windows account"
+        row(v, _boot, _who, self.autostart)
         v.addStretch(1)
         g.addWidget(f, 0, 0)
         f, v = card("Overlay skin")
         self.skin = SkinPicker(self.cfg.get("skin", "aurora"))
         v.addWidget(self.skin)
+        # v4 adaptive glass. "System" follows the OS APPEARANCE setting, not the wallpaper —
+        # a dark OS theme over a light wallpaper stays dark, which is why Dark and Light exist
+        # as overrides at all.
+        cur = self.cfg.get("pill_theme", "system")
+        self.pill_theme = Segmented(["System", "Dark", "Light"])
+        try:
+            self.pill_theme.set(["system", "dark", "light"].index(cur))
+        except ValueError:
+            self.pill_theme.set(0)
+        row(v, "Pill appearance", "the glass takes the colour of what is behind it",
+            self.pill_theme)
+        v.addWidget(lbl("System follows your Windows light/dark setting. If your wallpaper is "
+                        "light but your theme is dark, pick Light here.", "hint"))
         v.addStretch(1)
         g.addWidget(f, 0, 1)
         g.setRowStretch(1, 1)
@@ -550,6 +573,7 @@ class SettingsWindow(QDialog):
         out["live_mode"] = self.mode.index() == 0
         out["silence_commit_s"] = round(self.silence.value(), 1)
         out["skin"] = self.skin.value()
+        out["pill_theme"] = ["system", "dark", "light"][self.pill_theme.index()]
         out["url"] = self._address()
         if self.record.isChecked():
             out["record"] = out.get("record") or str(S.app_data() / "recordings")
@@ -563,7 +587,8 @@ class SettingsWindow(QDialog):
             if self.autostart.isChecked() != S.autostart_enabled():
                 S.set_autostart(self.autostart.isChecked())
         except OSError as e:
-            QMessageBox.warning(self, "Start with Windows", f"Could not change it: {e}")
+            QMessageBox.warning(self, "Start at login" if S.IS_MAC else "Start with Windows",
+                                f"Could not change it: {e}")
         self.mic.stop()
         self.accept()
 

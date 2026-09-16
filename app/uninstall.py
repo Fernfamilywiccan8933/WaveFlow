@@ -117,10 +117,14 @@ def scan(config_path: Path | None = None) -> list[Item]:
     except (OSError, ValueError):
         cfg = {}
     target = remote_target(cfg)
+    # "connect" means the server was already running before WaveFlow existed on this PC. It is not
+    # ours to stop, change or delete, so the row says so by name instead of the vague "none".
+    connected = (cfg.get("engine") or {}).get("mode") == "connect"
     items = [
         Item("server", f"Server install on {target[1]}" if target else "Server install",
              f"{target[0]}@{target[1]}:{target[2]} — container, image, volumes, files (over SSH)" if target
-             else "none set up by WaveFlow", 0, True, [], bool(target), cfg),
+             else f"you run that server yourself ({cfg.get('url', '')}) — WaveFlow leaves it alone"
+             if connected else "none set up by WaveFlow", 0, True, [], bool(target), cfg),
         Item("engine", "Local engine", "stop it if it is running", 0, True, [], True),
         Item("models", "Downloaded models", ", ".join(str(m) for m in models) or "none found",
              sum(size_of(m) for m in models), True, models, bool(models)),
@@ -130,7 +134,8 @@ def scan(config_path: Path | None = None) -> list[Item]:
              sum(size_of(p) for p in settings), True, settings + ([data] if data.exists() else []),
              bool(settings) or data.exists()),
         Item("shortcuts", "Shortcuts and start with Windows",
-             "Start menu and desktop shortcuts, and the start-with-Windows entry", 0, True, shortcuts,
+             ("the start-at-login LaunchAgent" if S.IS_MAC else
+              "Start menu and desktop shortcuts, and the start-with-Windows entry"), 0, True, shortcuts,
              bool(shortcuts) or S.autostart_enabled()),
         Item("vocab", "Personal vocabulary", "server\\vocab.user.json", sum(size_of(p) for p in vocab),
              False, vocab, bool(vocab)),

@@ -1,0 +1,186 @@
+"""The only place WaveFlow is allowed to know which operating system it is on.
+
+Why this exists
+---------------
+The client is 7,400 lines. Measured 2026-09-15, about 170 of them touch a Windows API — in
+`waveflow.py` (53), `setup_logic.py` (48) and `stt.py` (34). That is 2%. Porting to macOS is
+therefore a shim, not a rewrite, and this package is the shim.
+
+The contract
+------------
+Every function below exists on EVERY platform and never raises because of the platform. When a
+platform cannot do something, it returns the documented "did not happen" value — 0, False, None,
+"" — and the caller carries on. That rule is what lets the rest of the app stay platform-blind.
+
+The one that matters most is `caret_rect()`. On Windows it asks UIA; on macOS it asks the
+Accessibility API. Plenty of apps answer neither. The app already handles that: no caret means no
+ghost preview, and the words are still typed (`waveflow.py`, "No real caret -> NO ghost"). So
+`caret_rect()` returning None is a normal Tuesday, not an error.
+
+NOT named `platform`
+--------------------
+`platform` is a standard-library module. A package with that name inside `app/` would shadow it
+for every module in this folder, and the failure would appear far from the cause.
+
+Permissions
+-----------
+Windows needs none of this. macOS needs two grants before dictation works at all:
+  * Accessibility    — to type into another app, and to read where its caret is
+  * Input Monitoring — to see the hotkey while another app is in front
+`missing_permissions()` reports which are absent so the UI can ask for them instead of silently
+doing nothing. Without a paid Apple Developer signature macOS drops both grants whenever the app
+binary changes, i.e. after every update — see `permission_note()`.
+"""
+from __future__ import annotations
+
+import sys
+
+IS_WINDOWS = sys.platform == "win32"
+IS_MAC = sys.platform == "darwin"
+
+if IS_MAC:
+    from . import mac as _impl
+elif IS_WINDOWS:
+    from . import win as _impl
+else:
+    from . import posix as _impl
+
+NAME = _impl.NAME
+
+
+# ---------------------------------------------------------------- typing into the focused app
+def type_text(text: str) -> int:
+    """Type `text` into whatever app has focus. Returns events sent; 0 means nothing happened."""
+    return _impl.type_text(text)
+
+
+def paste_text(text: str) -> bool:
+    """Put `text` on the clipboard and press the paste chord. Restores the old clipboard late,
+    off-thread — slow apps read the clipboard well after the keystroke."""
+    return _impl.paste_text(text)
+
+
+def send_backspaces(n: int) -> int:
+    """`n` backspace presses, for live-typing corrections. Returns events sent."""
+    return _impl.send_backspaces(n)
+
+
+def inject_text(text: str, prefer_paste: bool = True) -> str:
+    """Put text at the cursor. Returns the method used: paste | type | failed | empty."""
+    if not text:
+        return "empty"
+    if prefer_paste and paste_text(text):
+        return "paste"
+    return "type" if type_text(text) else "failed"
+
+
+# ---------------------------------------------------------------- the other app's window
+def foreground_window():
+    """An opaque handle for the focused window, or None. Only ever passed back to this package."""
+    return _impl.foreground_window()
+
+
+def focus_window(handle) -> bool:
+    return _impl.focus_window(handle)
+
+
+def window_title(handle) -> str:
+    return _impl.window_title(handle)
+
+
+def caret_rect():
+    """(x, y, height) of the text caret in screen pixels, or None when nothing will say.
+
+    None is ordinary: the caller draws no ghost and types anyway.
+    """
+    return _impl.caret_rect()
+
+
+# ---------------------------------------------------------------- global hotkeys
+def register_hotkey(hotkey_id: int, combo: str) -> bool:
+    """Claim `combo` (e.g. "ctrl+alt+space") system-wide. False if the OS refused it."""
+    return _impl.register_hotkey(hotkey_id, combo)
+
+
+def unregister_hotkey(hotkey_id: int) -> None:
+    _impl.unregister_hotkey(hotkey_id)
+
+
+def needs_native_filter() -> bool:
+    """True when the caller must install its OWN Qt native event filter to receive hotkeys.
+
+    Windows delivers WM_HOTKEY through the Qt message loop, so a filter is required there.
+    macOS delivers through a CGEventTap on its own run loop, so no filter exists to install
+    and this is False.
+
+    This used to be one function that both answered the question AND built the filter, which
+    is why it tried to construct the app's filter class with an argument it does not take.
+    The caller already owns its filter object; all it needs from here is the question.
+    """
+    return _impl.needs_native_filter()
+
+
+def set_hotkey_callback(on_pressed) -> None:
+    """Register fn(hotkey_id, pressed) for platforms that call back instead of filtering.
+
+    A no-op on Windows. On macOS the tap calls this FROM ITS OWN THREAD.
+    """
+    _impl.set_hotkey_callback(on_pressed)
+
+
+# ---------------------------------------------------------------- the glass pill
+def make_frameless(win_id: int) -> None:
+    """Remove any frame or border the OS would draw on its own."""
+    _impl.make_frameless(win_id)
+
+
+def enable_glass(win_id: int, theme: str = "dark") -> bool:
+    """Real blur-behind under the pill. False means the caller must paint its own body.
+
+    `theme` is "dark" or "light" — already resolved, never "system".
+    """
+    return _impl.enable_glass(win_id, theme)
+
+
+def os_theme() -> str:
+    """"light" or "dark", from the OS appearance setting. Falls back to "dark".
+
+    This is the OS THEME, not the wallpaper. A dark theme over a light wallpaper reports dark,
+    which is correct: the user told the OS which they prefer.
+    """
+    return _impl.os_theme()
+
+
+# ---------------------------------------------------------------- where files live
+def app_data_dir():
+    """The per-user folder for models, logs and settings."""
+    return _impl.app_data_dir()
+
+
+def open_path(path) -> bool:
+    """Open a file or folder with the user's own default app."""
+    return _impl.open_path(path)
+
+
+def autostart_enabled() -> bool:
+    return _impl.autostart_enabled()
+
+
+def set_autostart(on: bool) -> None:
+    _impl.set_autostart(on)
+
+
+# ---------------------------------------------------------------- permissions (macOS only)
+def missing_permissions() -> list[tuple[str, str]]:
+    """[(name, why)] for permissions this platform needs and does not have. Empty on Windows."""
+    return _impl.missing_permissions()
+
+
+def open_permission_settings(name: str) -> bool:
+    """Open the OS settings page for one permission. False if there is nothing to open."""
+    return _impl.open_permission_settings(name)
+
+
+def permission_note() -> str:
+    """One honest sentence about permissions, or "" when there is nothing to say."""
+    return _impl.permission_note()

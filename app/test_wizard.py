@@ -23,8 +23,10 @@ ALL = S.Hardware(perf_cores=8, all_cores=24, directml=True, cuda=False, docker=T
 BARE = S.Hardware(perf_cores=4, all_cores=4)
 
 # --- every option lists all three engines, none hidden --------------------------------
+# "connect" is excluded on purpose and has its own block at the end of this file: it installs
+# nothing, so it offers no engine — the server already running has already chosen one.
 for hw in (ALL, BARE):
-    for opt in S.OPTIONS:
+    for opt in S.INSTALL_OPTIONS:
         for method in ("docker", "venv"):
             got = [e.engine for e in S.engines_for(opt, method, hw)]
             check(f"{opt}/{method} lists all engines", got, S.ENGINES)
@@ -59,7 +61,7 @@ check("threads reach the local command", "--threads 6" in S.build_plan(c).comman
 check("threads saved to config", S.build_plan(c).config["engine"]["threads"], 6)
 c = S.Choices(option="docker", engine="onnx-cpu", threads=12, token="t" * 20)
 check("threads reach docker .env", "THREADS=12" in S.build_plan(c).env_text, True)
-for opt, addr in (("onsite", "gpu-box.local"), ("vps", "stt.example.com")):
+for opt, addr in (("onsite", "server.local"), ("vps", "stt.example.com")):
     c = S.Choices(option=opt, engine="onnx-cpu", threads=3, token="t" * 20, address=addr)
     pl = S.build_plan(c)
     check(f"{opt}: threads in plan", "THREADS=3" in pl.env_text or "--threads 3" in " ".join(pl.commands), True)
@@ -99,8 +101,8 @@ check("threads out of range refused", bool(S.validate(S.Choices(option="local", 
 check("public http onsite warns", bool(S.warnings(S.Choices(option="onsite", address="8.8.8.8"))), True)
 check("tailscale IP is private", S.is_public_host("100.101.102.103"), False)
 check("LAN is private", S.is_public_host("192.168.1.20"), False)
-check(".local name is private", S.is_public_host("gpu-box.local"), False)
-check("ts.net name is private", S.is_public_host("box.tail1234.ts.net"), False)
+check(".local name is private", S.is_public_host("server.local"), False)
+check("ts.net name is private", S.is_public_host("server.tailnet.ts.net"), False)
 check("new token is long", len(S.new_token()) >= 32, True)
 
 
@@ -158,23 +160,23 @@ import tarfile  # noqa: E402
 
 import remote_install as RI  # noqa: E402
 
-check("host from address", [RI.host_of(a) for a in ("gpu-box", "gpu-box:8759", "http://10.0.0.5:8756",
+check("host from address", [RI.host_of(a) for a in ("server", "server:8759", "http://10.0.0.5:8756",
                                                      "https://stt.example.com")],
-      ["gpu-box", "gpu-box", "10.0.0.5", "stt.example.com"])
+      ["server", "server", "10.0.0.5", "stt.example.com"])
 check("ssh never prompts for a password", "BatchMode=yes" in RI.ssh_cmd("u", "h", "true"), True)
-check("target validation", (RI.validate_target("bob", "gpu-box", "~/waveflow"),
-                            bool(RI.validate_target("bob; rm", "gpu-box", "~/wf")),
-                            bool(RI.validate_target("bob", "gpu-box", "~/wf && rm -rf /")),
-                            bool(RI.validate_target("bob", "gpu-box", "../etc"))), ([], True, True, True))
+check("target validation", (RI.validate_target("bob", "server", "~/waveflow"),
+                            bool(RI.validate_target("bob; rm", "server", "~/wf")),
+                            bool(RI.validate_target("bob", "server", "~/wf && rm -rf /")),
+                            bool(RI.validate_target("bob", "server", "../etc"))), ([], True, True, True))
 check("ssh key rejected -> key help", (RI.classify_ssh_error("bob@h: Permission denied (publickey).")[0],
-                                      RI.key_help("bob", "gpu-box")[1]), ("auth", "ssh-copy-id bob@gpu-box"))
+                                      RI.key_help("bob", "server")[1]), ("auth", "ssh-copy-id bob@server"))
 check("ssh unreachable", RI.classify_ssh_error("ssh: connect to host h port 22: Connection timed out")[0],
       "unreachable")
 names = tarfile.open(fileobj=io.BytesIO(RI.server_tar()), mode="r:gz").getnames()
 check("ships server + docker", ("server/parakeet_server.py" in names, "docker/compose.yml" in names), (True, True))
 check("never ships personal vocab, .env or caches",
       [n for n in names if n.endswith(("vocab.user.json", "/.env", ".pyc")) or "__pycache__" in n], [])
-c = S.Choices(option="onsite", engine="onnx-gpu", method="docker", address="gpu-box", token="t" * 20)
+c = S.Choices(option="onsite", engine="onnx-gpu", method="docker", address="server", token="t" * 20)
 cmd = RI.compose_command(S.build_plan(c))
 check("compose reads the written .env", ("--env-file docker/.env" in cmd, "waveflow-onnx-gpu" in cmd),
       (True, True))
@@ -191,7 +193,7 @@ check("step names fit next to their detail", max(len(s) for s in RI.STEPS) <= 27
 def fake_probe(stdout, rc=0, stderr=""):
     res = mock.Mock(returncode=rc, stdout=stdout.encode(), stderr=stderr.encode())
     with mock.patch.object(RI, "_ssh", lambda *a, **k: res):
-        return RI.probe("bob", "gpu-box", "onnx-gpu")
+        return RI.probe("bob", "server", "onnx-gpu")
 
 
 good = "DOCKER=27.3.1\nRUNTIMES=/usr/bin/nvidia-ctkio.containerd.runc.v2 runc\nGPUS=GTX 1080;GTX 1060\nFREE_KB=53000000\n"
@@ -204,6 +206,107 @@ check("probe: docker group", fake_probe(good.replace("27.3.1", "permission denie
 check("probe: no gpu", fake_probe(good.replace("GTX 1080;GTX 1060", "")).kind, "no-gpu")
 check("probe: no toolkit", fake_probe(good.replace("/usr/bin/nvidia-ctk", "")).kind, "no-gpu")
 check("probe: disk", fake_probe(good.replace("53000000", "2000000")).kind, "disk")
+
+# --- "connect": the server is already running, so setup installs NOTHING ------------------
+# The bug this block exists to prevent: treating connect as a fifth flavour of install. Any
+# command, .env line or engine choice leaking in here would run a second container on a port that
+# is already serving, or write a guessed engine name into config.json.
+TOK = "k" * 24
+cn = S.Choices(option="connect", address="server.example.com:8756", token=TOK)
+
+check("connect is an option", "connect" in S.OPTIONS, True)
+check("connect is NOT an install option", "connect" in S.INSTALL_OPTIONS, False)
+check("connect has a name", bool(S.OPTION_NAMES.get("connect")), True)
+check("connect offers no engine", S.engines_for("connect", "docker", ALL), [])
+
+pl = S.build_plan(cn)
+check("connect runs no commands", pl.commands, [])
+check("connect writes no .env", (pl.env_path, pl.env_text), ("", ""))
+check("connect never runs anything here", pl.run_here, False)
+check("connect says nothing is installed", pl.where, "Nothing is installed")
+check("connect keeps the token", pl.token, TOK)
+check("connect adds the default port", pl.url, "http://server.example.com:8756")
+check("connect config mode", pl.config["engine"], {"mode": "connect"})
+check("connect config has no engine name", "engine" in pl.config["engine"], False)
+check("connect config has no thread count", "threads" in pl.config["engine"], False)
+
+# a bare host gets http:// and the default port; an explicit https:// is left alone
+check("connect bare host", S.build_plan(S.Choices(option="connect", address="10.0.0.9", token=TOK)).url,
+      "http://10.0.0.9:8756")
+check("connect keeps https", S.build_plan(S.Choices(option="connect", address="https://stt.example.com", token=TOK)).url,
+      "https://stt.example.com")
+
+# validate
+check("connect needs an address", S.validate(S.Choices(option="connect", address="", token=TOK)),
+      ["Enter the server address."])
+check("connect with both is valid", S.validate(cn), [])
+
+# --- a TOKENLESS server is a legitimate setup, and this is the operator's own -------------
+# A real user's own box often runs with no WAVEFLOW_TOKEN at all. The first cut of this mode
+# demanded a token of 16+ chars and would have refused exactly the setup it was built for.
+# 100.64.0.0/10 is CGNAT, which is what Tailscale hands out — private, so no token is fine.
+LAN_BOX = "http://100.100.100.100:8756"        # Tailscale-style CGNAT, i.e. private
+check("connect accepts the operator's tokenless Tailscale box",
+      S.validate(S.Choices(option="connect", address=LAN_BOX, token="")), [])
+check("connect accepts a tokenless LAN box",
+      S.validate(S.Choices(option="connect", address="192.168.1.5:8756", token="")), [])
+check("connect accepts a tokenless .local box",
+      S.validate(S.Choices(option="connect", address="server.local:8756", token="")), [])
+# but it still says so out loud
+check("tokenless connect warns",
+      any("no token" in w for w in S.warnings(S.Choices(option="connect", address=LAN_BOX, token=""))), True)
+check("tokenless connect warning names Tailscale as fine",
+      any("Tailscale" in w for w in S.warnings(S.Choices(option="connect", address=LAN_BOX, token=""))), True)
+check("a token that IS set removes the warning",
+      S.warnings(S.Choices(option="connect", address=LAN_BOX, token=TOK)), [])
+
+# --- tokenless on a PUBLIC address is refused, not warned ---------------------------------
+pub = S.validate(S.Choices(option="connect", address="http://stt.example.com", token=""))
+check("tokenless public address is an error", len(pub), 1)
+check("and it says why", "anyone" in pub[0], True)
+check("a token makes the public address acceptable",
+      S.validate(S.Choices(option="connect", address="http://stt.example.com", token=TOK)), [])
+
+# --- a short token is still a typo, whatever the address ----------------------------------
+short = S.validate(S.Choices(option="connect", address=LAN_BOX, token="abc"))
+check("a short token is rejected as a typo", len(short), 1)
+check("and offers the way out", "clear the box" in short[0], True)
+
+# the plan must survive a tokenless connect unchanged
+pl0 = S.build_plan(S.Choices(option="connect", address=LAN_BOX, token=""))
+check("tokenless connect still installs nothing", pl0.commands, [])
+check("tokenless connect saves an empty token", pl0.config["token"], "")
+check("tokenless connect keeps the url", pl0.url, LAN_BOX)
+check("tokenless connect round-trips", S.choices_from_config(pl0.config).option, "connect")
+# connect must NOT inherit the VPS https rule — a LAN box on plain http is the normal case
+check("connect allows plain http on a private address",
+      S.validate(S.Choices(option="connect", address="http://192.168.1.5:8756", token=TOK)), [])
+
+# warnings
+check("connect warns on public http",
+      any("unencrypted" in w for w in S.warnings(S.Choices(option="connect", address="http://stt.example.com", token=TOK))),
+      True)
+check("connect quiet on a Tailscale address",
+      S.warnings(S.Choices(option="connect", address="http://server.tailnet.ts.net:8756", token=TOK)), [])
+check("connect quiet on a LAN address",
+      S.warnings(S.Choices(option="connect", address="http://192.168.1.5:8756", token=TOK)), [])
+check("connect gives no thread advice",
+      S.warnings(S.Choices(option="connect", address="10.0.0.9", token=TOK, engine="onnx-cpu", auto_threads=False)), [])
+
+# a saved connect config rebuilds the same Choices (Settings depends on this)
+saved = pl.config
+back = S.choices_from_config(saved)
+check("connect round-trips the mode", back.option, "connect")
+check("connect round-trips the address", back.address, pl.url)
+check("connect round-trips the token", back.token, TOK)
+check("connect round-trip rebuilds the same plan", S.build_plan(back).config, saved)
+
+# rotating the token: we did not install that server, so we never claim to restart it
+rot = S.rotation_plan(saved, "n" * 24)
+check("connect rotation happens on the server", rot.kind, "server")
+check("connect rotation writes no env", (rot.env_path, rot.env_text), ("", ""))
+check("connect rotation names the new token", any("n" * 24 in c for c in rot.commands), True)
+check("connect rotation invents no compose command", any("docker" in c for c in rot.commands), False)
 
 if FAILS:
     print("WIZARD_FAIL\n" + "\n".join(FAILS))

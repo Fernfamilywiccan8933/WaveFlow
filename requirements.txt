@@ -1,9 +1,16 @@
-# Windows: client + local ONNX engine
+# Client + local ONNX engine. Windows and macOS.
+#
+# macOS also needs the pyobjc frameworks. They are NOT listed here, because pip would then try to
+# install them on Windows too, where they do not exist. The README's macOS command adds them:
+#   pyobjc-framework-Cocoa pyobjc-framework-Quartz pyobjc-framework-ApplicationServices
 -r requirements-server.txt
 PySide6==6.11.1
 sounddevice
 requests
 websocket-client
+# Used ONLY by stt.py's standalone command-line mode, never by the app. It installs on macOS but
+# needs root to read keys there — which is why the app uses a CGEventTap via osbridge instead, and
+# why leaving this in the list costs a Mac user nothing.
 keyboard
 pyperclip
 mss

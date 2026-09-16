@@ -16,46 +16,60 @@ import io
 import sys
 import time
 import wave
-from ctypes import wintypes
-
 import requests
 
 SAMPLE_RATE = 16000
+IS_WINDOWS = sys.platform == "win32"
 
 # ---------- SendInput (Unicode) ----------
-ULONG_PTR = ctypes.POINTER(ctypes.c_ulong)
+# `ctypes.wintypes` EXISTS ONLY ON WINDOWS. On macOS importing it raises
+# "ValueError: _type_ 'v' not supported" at IMPORT time — before one line of this file runs.
+# It used to be a plain top-level import, and that single line is why `import stt`, and so the
+# whole app, could not even load on a Mac.
+#
+# The structs below read wintypes.WORD in their CLASS BODIES, so a stub object that raises on
+# attribute access would not help: the whole block has to be conditional. Everything from
+# "pipeline" onward is portable and is always defined.
+#
+# Direction of delegation, so this can never become a loop: osbridge.win calls INTO this module.
+# This module must never import osbridge.
 KEYEVENTF_UNICODE, KEYEVENTF_KEYUP = 0x0004, 0x0002
+ULONG_PTR = ctypes.POINTER(ctypes.c_ulong)
 
+if IS_WINDOWS:
+    from ctypes import wintypes
 
-class KEYBDINPUT(ctypes.Structure):
-    _fields_ = [("wVk", wintypes.WORD), ("wScan", wintypes.WORD),
-                ("dwFlags", wintypes.DWORD), ("time", wintypes.DWORD),
-                ("dwExtraInfo", ctypes.c_size_t)]
+    class KEYBDINPUT(ctypes.Structure):
+        _fields_ = [("wVk", wintypes.WORD), ("wScan", wintypes.WORD),
+                    ("dwFlags", wintypes.DWORD), ("time", wintypes.DWORD),
+                    ("dwExtraInfo", ctypes.c_size_t)]
 
+    class MOUSEINPUT(ctypes.Structure):
+        # Present only to size the union correctly — SendInput validates
+        # cbSize against the FULL Win32 INPUT struct (union of all three).
+        _fields_ = [("dx", wintypes.LONG), ("dy", wintypes.LONG),
+                    ("mouseData", wintypes.DWORD), ("dwFlags", wintypes.DWORD),
+                    ("time", wintypes.DWORD), ("dwExtraInfo", ctypes.c_size_t)]
 
-class MOUSEINPUT(ctypes.Structure):
-    # Present only to size the union correctly — SendInput validates
-    # cbSize against the FULL Win32 INPUT struct (union of all three).
-    _fields_ = [("dx", wintypes.LONG), ("dy", wintypes.LONG),
-                ("mouseData", wintypes.DWORD), ("dwFlags", wintypes.DWORD),
-                ("time", wintypes.DWORD), ("dwExtraInfo", ctypes.c_size_t)]
+    class HARDWAREINPUT(ctypes.Structure):
+        _fields_ = [("uMsg", wintypes.DWORD), ("wParamL", wintypes.WORD),
+                    ("wParamH", wintypes.WORD)]
 
+    class _INPUTunion(ctypes.Union):
+        _fields_ = [("ki", KEYBDINPUT), ("mi", MOUSEINPUT), ("hi", HARDWAREINPUT)]
 
-class HARDWAREINPUT(ctypes.Structure):
-    _fields_ = [("uMsg", wintypes.DWORD), ("wParamL", wintypes.WORD),
-                ("wParamH", wintypes.WORD)]
-
-
-class _INPUTunion(ctypes.Union):
-    _fields_ = [("ki", KEYBDINPUT), ("mi", MOUSEINPUT), ("hi", HARDWAREINPUT)]
-
-
-class INPUT(ctypes.Structure):
-    _fields_ = [("type", wintypes.DWORD), ("u", _INPUTunion)]
+    class INPUT(ctypes.Structure):
+        _fields_ = [("type", wintypes.DWORD), ("u", _INPUTunion)]
 
 
 def send_text(text: str) -> int:
-    """Type text at the focused control via Unicode SendInput. Returns events sent."""
+    """Type text at the focused control via Unicode SendInput. Returns events sent.
+
+    Windows only. On any other OS this returns 0 and the caller should be going through
+    osbridge.type_text() instead — see the module header for why the delegation runs one way.
+    """
+    if not IS_WINDOWS:
+        return 0
     inputs = []
     for ch in text:
         code = ord(ch)
@@ -68,7 +82,11 @@ def send_text(text: str) -> int:
 def paste_text(text: str) -> bool:
     """Clipboard paste: preserve prior clipboard, set text, Ctrl+V, restore.
     Instant regardless of length and immune to per-char app slowness. Returns
-    True on success. Fails only where the target ignores Ctrl+V (rare)."""
+    True on success. Fails only where the target ignores Ctrl+V (rare).
+
+    Windows only; osbridge.mac has the NSPasteboard + Cmd+V version."""
+    if not IS_WINDOWS:
+        return False
     import pyperclip
     try:
         prev = ""
@@ -102,8 +120,8 @@ def paste_text(text: str) -> bool:
 
 
 def send_backspaces(n: int) -> int:
-    """n Backspace presses via SendInput — used by live-typing corrections."""
-    if n <= 0:
+    """n Backspace presses via SendInput — used by live-typing corrections. Windows only."""
+    if n <= 0 or not IS_WINDOWS:
         return 0
     VK_BACK = 0x08
     inputs = []
@@ -126,8 +144,9 @@ def strip_fillers(text: str) -> str:
 
 def focus_window(hwnd: int) -> bool:
     """Legally take foreground (ALT-tap unlocks SetForegroundWindow for a
-    background process), verify we actually got it."""
-    if not hwnd:
+    background process), verify we actually got it. Windows only — macOS has no such lock,
+    so osbridge.mac just activates the app."""
+    if not hwnd or not IS_WINDOWS:
         return False
     u = ctypes.windll.user32
     for _ in range(3):
@@ -141,6 +160,8 @@ def focus_window(hwnd: int) -> bool:
 
 
 def window_title(hwnd: int) -> str:
+    if not IS_WINDOWS:
+        return ""
     u = ctypes.windll.user32
     buf = ctypes.create_unicode_buffer(128)
     u.GetWindowTextW(hwnd, buf, 128)
