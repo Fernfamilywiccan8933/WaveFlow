@@ -33,6 +33,7 @@ def check(name, got, want):
 
 # Every function the package promises, with the arguments callers pass.
 CONTRACT = {
+    "can_type": [],
     "type_text": ["text"],
     "paste_text": ["text"],
     "send_backspaces": ["n"],
@@ -206,6 +207,61 @@ try:
         check("the error says which state", e.status, "denied")
 finally:
     audio.mic_permission, audio.sd = _real_status, _real_sd
+
+# --- the app refuses to type into the void (Mac, 2026-09-16) ------------------------------------
+# Without Accessibility, macOS DROPS synthetic keystrokes and the typing call still "works". Every
+# sentence was heard, logged as typed, and none appeared. The app must ask first and hold instead.
+check("mac can_type is the Accessibility check",
+      "return _has_accessibility()" in inspect.getsource(mac.can_type), True)
+check("windows can always type", win.can_type(), True)
+check("posix cannot type (it sends nothing)", posix.can_type(), False)
+
+import waveflow  # noqa: E402
+
+
+class _Emit:
+    def __init__(self):
+        self.msgs = []
+
+    def emit(self, m):
+        self.msgs.append(m)
+
+
+class _Args:
+    replay, demo = "", ""
+
+
+class _App:
+    args = _Args()
+
+    def __init__(self):
+        self.error_sig = _Emit()
+
+
+_real_can = osbridge.can_type
+_real_fg = osbridge.foreground_window
+try:
+    fg_asked = []
+    osbridge.foreground_window = lambda: fg_asked.append(1) or 4242
+    osbridge.can_type = lambda: False
+    a = _App()
+    a._can_type = waveflow.WaveFlow._can_type.__get__(a)
+    check("no permission -> no typing target", waveflow.WaveFlow._typing_target(a), 0)
+    check("...decided before looking at any window", fg_asked, [])
+    check("the user is told why, once", len(a.error_sig.msgs), 1)
+    check("the message names Accessibility", "Accessibility" in a.error_sig.msgs[0], True)
+    waveflow.WaveFlow._typing_target(a)
+    check("not repeated on every partial", len(a.error_sig.msgs), 1)
+finally:
+    osbridge.can_type, osbridge.foreground_window = _real_can, _real_fg
+
+# --- the pill must survive clicking another app on macOS ------------------------------------------
+_wf = Path(waveflow.__file__).read_text(encoding="utf-8")
+for cls in ("class GhostText", "class WaveFlow(QWidget)"):
+    body = _wf[_wf.index(cls):]
+    body = body[:body.index("setWindowFlags") + 600]
+    check(f"{cls}: WA_MacAlwaysShowToolWindow set with its window flags",
+          "WA_MacAlwaysShowToolWindow, True" in body, True)
 
 if FAILS:
     print("OSBRIDGE_FAIL\n" + "\n".join(FAILS))

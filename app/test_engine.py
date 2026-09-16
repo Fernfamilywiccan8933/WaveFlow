@@ -138,6 +138,44 @@ with tempfile.TemporaryDirectory() as _tmp:
     if os.name != "nt":
         check("posix: engine gets its own session", started.get("start_new_session"), True)
 
+# --- the same "sys.executable is Python" class, found in the Mac .app 2026-09-16 -------------------
+# The provider probe ran `WaveFlow -c ...`; the app's argparse rejected -c with exit 2, read as
+# "no providers", so a built app could never see DirectML or CoreML.
+seen = {}
+
+
+class _R:
+    returncode, stdout = 0, "DmlExecutionProvider,CPUExecutionProvider\n"
+
+
+def _fake_run(cmd, **kw):
+    seen["cmd"] = cmd
+    return _R()
+
+
+with mock.patch.object(S.subprocess, "run", _fake_run), mock.patch.object(S, "FROZEN", True):
+    check("frozen: providers parsed", S.onnx_providers(), ["DmlExecutionProvider", "CPUExecutionProvider"])
+    check("frozen: probe asks the app itself", seen["cmd"], [sys.executable, "--providers"])
+    check("frozen: no pip commands (pip cannot reach inside a build)", S.gpu_install_commands(), [])
+with mock.patch.object(S.subprocess, "run", _fake_run), mock.patch.object(S, "FROZEN", False):
+    S.onnx_providers()
+    check("source: probe still uses python -c", seen["cmd"][1], "-c")
+    check("source: pip commands still offered", bool(S.gpu_install_commands()), True)
+
+main_src = src[src.index("def main() -> int:"):]
+check("--providers is handled before argparse",
+      main_src.index('["--providers"]') < main_src.index("ap = argparse.ArgumentParser()"), True)
+wiz = (Path(__file__).resolve().parent / "wizard.py").read_text(encoding="utf-8")
+check("wizard hides the GPU install button when there is nothing to run",
+      "need_dml and bool(S.gpu_install_commands())" in wiz, True)
+
+# The real frozen answer, when a build is named (skipped otherwise).
+_exe = os.environ.get("WAVEFLOW_TEST_EXE")
+if _exe:
+    import subprocess
+    r = subprocess.run([_exe, "--providers"], capture_output=True, text=True, timeout=120)
+    check("built app answers --providers", (r.returncode, "CPUExecutionProvider" in r.stdout), (0, True))
+
 if FAILS:
     print("ENGINE_FAIL\n" + "\n".join(FAILS))
     raise SystemExit(1)

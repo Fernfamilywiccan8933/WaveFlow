@@ -180,10 +180,16 @@ def clamp_threads(n) -> int:
 
 def onnx_providers() -> list[str]:
     """Asked in a SEPARATE process: importing onnxruntime here would lock its DLLs on Windows, and
-    the wizard's "Install GPU support" button could then not replace it."""
+    the wizard's "Install GPU support" button could then not replace it.
+
+    Frozen, sys.executable is WaveFlow itself, not Python, and its argument parser rejected `-c`
+    with exit 2 — read as "no providers", so a built app could never see DirectML or CoreML
+    (found on a Mac 2026-09-16; identical on Windows). It asks itself via `--providers` instead,
+    the same self re-entry `--serve` uses."""
+    cmd = ([sys.executable, "--providers"] if FROZEN else
+           [sys.executable, "-c", "import onnxruntime as o; print(','.join(o.get_available_providers()))"])
     try:
-        r = subprocess.run([sys.executable, "-c",
-                            "import onnxruntime as o; print(','.join(o.get_available_providers()))"],
+        r = subprocess.run(cmd,
                            capture_output=True, text=True, timeout=60,
                            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         return [p for p in r.stdout.strip().split(",") if p] if r.returncode == 0 else []
@@ -203,7 +209,12 @@ def gpu_install_commands() -> list[list[str]]:
     following that advice would have DOWNGRADED them from the current 1.30 and taken the CoreML
     support away with it. Checked against PyPI, 2026-09-16. Reinstalling the official wheel is
     the only sensible repair here, so that is what this offers.
+
+    A frozen build returns NOTHING: pip cannot install into it, and `WaveFlow -m pip` is not even
+    a valid command there. Whatever onnxruntime was bundled is final, so the wizard hides the button.
     """
+    if FROZEN:
+        return []
     py = sys.executable
     if IS_MAC:
         return [[py, "-m", "pip", "install", "--upgrade", "--force-reinstall", "onnxruntime"]]
@@ -293,6 +304,7 @@ def engines_for(option: str, method: str, hw: Hardware) -> list[EngineChoice]:
             out.append(EngineChoice("onnx-gpu", ENGINE_NAMES["onnx-gpu"],
                                     "fp32 · 2.4 GB · DirectML (any DirectX 12 GPU)", True,
                                     "" if hw.directml else
+                                    "no DirectX 12 GPU found by this build" if FROZEN else
                                     "needs GPU support installed: pip install onnxruntime-directml"))
         out.append(EngineChoice("nemo", ENGINE_NAMES["nemo"], "max quality", False,
                                 "needs Docker — choose “This PC — Docker”"))

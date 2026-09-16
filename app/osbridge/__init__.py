@@ -65,6 +65,17 @@ def send_backspaces(n: int) -> int:
     return _impl.send_backspaces(n)
 
 
+def can_type() -> bool:
+    """Will keystrokes sent to another app actually arrive?
+
+    macOS DROPS synthetic key events from an app without Accessibility, with no error — the
+    typing call "succeeds" and nothing appears. Seen on a Mac 2026-09-16: every sentence was
+    heard right, logged as typed, and none reached the window. Ask this BEFORE typing, so
+    the words can go to the clipboard instead of into the void. Windows: always True.
+    """
+    return _impl.can_type()
+
+
 def inject_text(text: str, prefer_paste: bool = True) -> str:
     """Put text at the cursor. Returns the method used: paste | type | failed | empty."""
     if not text:

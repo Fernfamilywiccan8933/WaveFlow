@@ -198,6 +198,11 @@ for _d in (APP_DIR, _LOG_DIR):
 log = logging.getLogger("waveflow")
 logging.basicConfig(filename=str(_LOG_DIR / "waveflow.log"), level=logging.INFO,
                     format="%(asctime)s %(levelname)s %(message)s")
+# httpx logs every request at INFO — during a model download that is each CDN link with its full
+# Policy/Signature query string. Not a secret (they expire, the model is public), but it bloated
+# one launch's log to 12 KB (Mac, 2026-09-16). Warnings and errors still come through.
+for _noisy in ("httpx", "httpcore"):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
 
 CONFIG_PATH = APP_DIR / "config.json"
 # STT server: this machine by default. A remote server is set in config.json "url" (+ "token").
@@ -480,6 +485,10 @@ class GhostText(QWidget):
         super().__init__()
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint |
                             Qt.Tool | Qt.WindowTransparentForInput)
+        # macOS makes a Qt.Tool window an NSPanel that HIDES when the app deactivates. WaveFlow is
+        # a menu-bar app, so clicking the window you dictate into hid it (measured on a Mac,
+        # 2026-09-16: hidesOnDeactivate=True). No effect on Windows.
+        self.setAttribute(Qt.WA_MacAlwaysShowToolWindow, True)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WA_ShowWithoutActivating, True)
         self.label = QLabel(self)
@@ -958,6 +967,9 @@ class WaveFlow(QWidget):
 
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool |
                             Qt.WindowDoesNotAcceptFocus)
+        # Same as GhostText: without this the pill vanished on macOS the moment you clicked the
+        # app you wanted to dictate into.
+        self.setAttribute(Qt.WA_MacAlwaysShowToolWindow, True)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         # NEVER steal focus from the app you're dictating into — otherwise the caret
         # leaves the target and the paste has nowhere to land (observed: "text appears
@@ -1615,6 +1627,7 @@ class WaveFlow(QWidget):
 
         self._rx_alive = True
         self._last_burst_t = time.time()
+        self._last_frame_t = time.time()      # ANY frame from the server, pongs included
         self._last_words, self._last_words_t = ("", "", ""), 0.0   # set BEFORE rx starts reading them
 
         def rx():
@@ -1629,8 +1642,15 @@ class WaveFlow(QWidget):
             committed is never revisited, so nothing the user types can be clobbered."""
             while not self._stream_stop.is_set():
                 try:
-                    raw = ws.recv()
-                    if not raw:
+                    # recv_data(control_frame=True), not recv(): recv() swallows PONG frames, and
+                    # the pongs are how the watchdog now tells a quiet link from a dead one.
+                    op, raw = ws.recv_data(control_frame=True)
+                    self._last_frame_t = time.time()
+                    if op == websocket.ABNF.OPCODE_PONG:
+                        continue
+                    if op == websocket.ABNF.OPCODE_TEXT:
+                        raw = raw.decode("utf-8", errors="replace")
+                    if op == websocket.ABNF.OPCODE_CLOSE or not raw:
                         # Empty frame = the socket was closed, normally by our own session
                         # end. Parsing it raised JSONDecodeError and logged "stream rx died
                         # ... link is one-way" on every ordinary close — a false alarm that
@@ -1693,6 +1713,7 @@ class WaveFlow(QWidget):
         from setup_logic import VAD_MAX, VAD_MIN, sensitivity_params
         sens = sensitivity_params(self.cfg.get("mic_sensitivity", "balanced"))
         run_s = 0.0
+        last_ping_t = 0.0
         # DEBUG RECORDER (--record <dir>). Opened once per SESSION, not per socket:
         # this worker re-enters itself on reconnect, so opening it inside the loop
         # would start a new file mid-sentence and split the evidence in two.
@@ -1722,17 +1743,28 @@ class WaveFlow(QWidget):
                     last_speech_t = max(now if speaking else 0.0, self._last_words_t)
                     spoke_yet = True
                 self.wave.paused = not loud
+                # HEARTBEAT. The server's websocket layer answers a ping with a pong by itself,
+                # so a live link always has a frame from it within a few seconds.
+                if now - last_ping_t > 5.0:
+                    last_ping_t = now
+                    ws.ping()
                 # WATCHDOG: the link can rot without either side raising —
                 # send/recv race on one websocket-client socket, a half-open TCP
                 # connection, a server that stopped replying. The symptom was a
                 # live-looking widget that never typed. If the receiver is gone,
-                # or we've been streaming real speech for a while with nothing
-                # coming back, treat the link as dead and RECONNECT.
+                # or the server has sent NOTHING — not even a pong — for 20 s, the link is dead:
+                # RECONNECT.
+                #
+                # It used to judge by time since the last TRANSCRIPT while the client heard sound.
+                # But the client's loudness test and the server's speech test disagree: headset
+                # noise is "loud" here and silence there, so the server rightly sent no words and a
+                # healthy link was torn down every ~20 s (Mac log 2026-09-16, rx_alive=True each
+                # time), risking the start of the next sentence. Pongs prove the link, words don't.
                 stale = (not self._rx_alive) or (
-                    speaking and now - self._last_burst_t > 20.0)
+                    speaking and now - self._last_frame_t > 20.0)
                 if stale and not self._stream_stop.is_set():
-                    log.error("stream link stale (rx_alive=%s, %.0fs since a burst) "
-                              "— reconnecting", self._rx_alive, now - self._last_burst_t)
+                    log.error("stream link stale (rx_alive=%s, %.0fs since any frame) "
+                              "— reconnecting", self._rx_alive, now - self._last_frame_t)
                     raise ConnectionError("link stale")
                 limit = idle_limit if spoke_yet else max(idle_limit, PRESPEECH_GRACE_S)
                 if now - last_speech_t > limit:
@@ -1795,6 +1827,24 @@ class WaveFlow(QWidget):
         # extension of it is recognized (storing the bounce broke that)
         return " ".join(nw[:common]) + " …" if common else old
 
+    def _can_type(self) -> bool:
+        """osbridge.can_type(), asked at most every 2 s (this runs on every partial), with ONE
+        warning per minute when it is refused — so the user learns why nothing appears while
+        still talking, not only when the session ends."""
+        now = time.monotonic()
+        if now - getattr(self, "_can_type_at", -99.0) > 2.0:
+            self._can_type_at = now
+            try:
+                self._can_type_last = bool(osbridge.can_type())
+            except Exception:
+                self._can_type_last = True
+        if not self._can_type_last and now - getattr(self, "_can_type_warned", -999.0) > 60.0:
+            self._can_type_warned = now
+            log.warning("typing blocked: no Accessibility permission — words go to the clipboard")
+            self.error_sig.emit("WaveFlow can't type yet — allow it in System Settings → Privacy & "
+                                "Security → Accessibility. Your words will be on the clipboard.")
+        return self._can_type_last
+
     def _typing_ok(self) -> bool:
         """Safe to emit keystrokes right now? Never in test modes, never into a
         window other than the dictation target."""
@@ -1818,6 +1868,11 @@ class WaveFlow(QWidget):
         of ours being open means the user is busy with us: hold.
         """
         if getattr(self.args, "replay", "") or self.args.demo:
+            return 0
+        if not self._can_type():
+            # Keystrokes would be DROPPED by the OS (macOS without Accessibility), yet every call
+            # would look like it worked. No target = the words are held, and at session end they go
+            # to the clipboard with a note — the path that already exists for "nowhere to type".
             return 0
         fg = osbridge.foreground_window()
         if not fg:
@@ -2198,6 +2253,15 @@ class WaveFlow(QWidget):
         if self._target_hwnd and osbridge.foreground_window() != self._target_hwnd:
             log.info("segment(%s): target not focused — skipped %r", reason, text)
             return
+        if not self._can_type():
+            # The OS would drop the keystrokes silently. Clipboard instead, never the void.
+            try:
+                import pyperclip
+                pyperclip.copy(text)
+                log.info("segment(%s): cannot type -> clipboard: %r", reason, text)
+            except Exception as e:
+                log.error("segment(%s): cannot type and clipboard failed (%s): %r", reason, e, text)
+            return
         send_text((" " if self._typed_any else "") + text)
         self._typed_any = True
         # A dead hotkey outranks a latency figure: the latency is trivia, the hotkey is whether
@@ -2252,7 +2316,7 @@ class WaveFlow(QWidget):
                     pyperclip.copy(left)
                     log.info("undelivered %d chars -> clipboard: %r", len(left), left)
                     self.error_sig.emit("Couldn't type it — your words are on the clipboard "
-                                        "(Ctrl+V to paste).")
+                                        f"({'Ctrl' if IS_WINDOWS else 'Cmd'}+V to paste).")
                 except Exception as e:
                     log.error("undelivered text lost (clipboard failed: %s): %r", e, left)
         else:
@@ -2478,6 +2542,11 @@ def main() -> int:
     # never open a window, register a hotkey, or start a second tray icon.
     if sys.argv[1:2] == ["--serve"]:
         return serve_main(sys.argv[2:])
+    if sys.argv[1:2] == ["--providers"]:
+        # setup_logic.onnx_providers() asks a frozen build this way; a frozen build has no `-c`.
+        import onnxruntime
+        print(",".join(onnxruntime.get_available_providers()))
+        return 0
     ap = argparse.ArgumentParser()
     ap.add_argument("--url", default="",
                     help="STT server URL; empty = use config.json (default http://127.0.0.1:8756)")

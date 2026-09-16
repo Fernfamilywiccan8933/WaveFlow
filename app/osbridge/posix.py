@@ -17,6 +17,10 @@ from pathlib import Path
 NAME = "posix"
 
 
+def can_type() -> bool:
+    return False         # type_text below never sends anything, so words go to the clipboard
+
+
 def type_text(text: str) -> int:
     return 0
 

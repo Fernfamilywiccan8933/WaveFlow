@@ -66,7 +66,9 @@ with tempfile.TemporaryDirectory() as t:
         items = {i.key: i for i in U.scan(root / "app" / "config.json")}
         check("all items listed", list(items),
               ["server", "engine", "models", "docker", "settings", "shortcuts", "vocab", "folder"])
-        check("shortcuts item found", (items["shortcuts"].present, len(items["shortcuts"].paths)), (True, 2))
+        # Present on both (autostart is on), but only Windows has .lnk files to list — a Mac makes none.
+        check("shortcuts item found", (items["shortcuts"].present, len(items["shortcuts"].paths)),
+              (True, 0 if sys.platform == "darwin" else 2))
         U.run([items["shortcuts"]], {"shortcuts"}, log=lambda *_: None)
         check("shortcuts removed, autostart off, other .lnk kept",
               (len(S.shortcuts_ours()), autostart[0], foreign.exists()), (0, False, True))
@@ -135,7 +137,10 @@ with tempfile.TemporaryDirectory() as t:
     with mock.patch.object(sys, "frozen", True, create=True), \
          mock.patch.object(sys, "executable", str(exe_dir / "WaveFlow.exe")):
         F = importlib.reload(S)
-        check("frozen ROOT = the exe's folder", (F.ROOT, F.APP_DIR), (exe_dir.resolve(), exe_dir.resolve()))
+        # A frozen MAC keeps its data OUTSIDE the bundle on purpose, so an update cannot delete it.
+        want_app = (Path.home() / "Library" / "Application Support" / "WaveFlow"
+                    if sys.platform == "darwin" else exe_dir.resolve())
+        check("frozen ROOT = the exe's folder", (F.ROOT, F.APP_DIR), (exe_dir.resolve(), want_app))
     importlib.reload(S)                                        # back to the source layout for the rest
     check("exe folder counts as ours", S.is_app_folder(exe_dir), True)
     check("Temp / unpack folders never count as ours", (S.is_app_folder(t / "Temp"), S.is_app_folder(meipass)),

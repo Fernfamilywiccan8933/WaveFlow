@@ -21,6 +21,10 @@ _KEYEVENTF_KEYUP = 0x0002
 
 
 # ---------------------------------------------------------------- typing
+def can_type() -> bool:
+    return True          # SendInput needs no permission for a normal-integrity target
+
+
 def type_text(text: str) -> int:
     import stt
     return stt.send_text(text)

@@ -57,6 +57,12 @@ def _appkit():
 
 
 # ---------------------------------------------------------------- typing
+def can_type() -> bool:
+    """CGEventPost from an app without Accessibility is silently discarded, so typing is only
+    real when the process is trusted. Checked without the prompt option (see _has_accessibility)."""
+    return _has_accessibility()
+
+
 def type_text(text: str) -> int:
     """Type `text` into the focused app.
 

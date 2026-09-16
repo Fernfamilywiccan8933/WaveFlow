@@ -704,7 +704,8 @@ class SetupWizard(QDialog):
             card.setChecked(e.engine == c.engine)
         have_gpu = self.hw.coreml if S.IS_MAC else self.hw.directml
         need_dml = c.option == "local" and c.engine == "onnx-gpu" and not have_gpu
-        self.gpu_install.setVisible(need_dml)
+        # A frozen build has no install commands (pip cannot reach inside it), so no button.
+        self.gpu_install.setVisible(need_dml and bool(S.gpu_install_commands()))
         self.thr.setEnabled(not c.auto_threads)
         self.thr_hint.setText(f"Auto = {self.hw.perf_cores} performance cores on this PC. More is slower on hybrid CPUs."
                               if c.option in ("local", "docker") else
