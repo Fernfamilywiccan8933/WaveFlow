@@ -28,6 +28,9 @@ Engine: NVIDIA **Parakeet TDT 0.6B v2** (English), via ONNX Runtime (default) or
 
 [**WaveFlow.exe**](../../releases/latest) → double-click. Nothing else to install.
 
+The speech engine is inside the app (109 MB). No Python, no Docker. The first start downloads the
+model once, about 660 MB.
+
 **Or install from PowerShell**
 
 ```powershell
@@ -88,6 +91,10 @@ venv/bin/python app/build.py --install
 
 Builds `WaveFlow.app` and puts it in **/Applications**, so you can reopen it from Launchpad or
 Spotlight. Pick your own folder with `--install ~/Apps`.
+
+The app carries its own engine, so *This Mac — background app* works from it. The model, settings
+and logs live in `~/Library/Application Support/WaveFlow` and `~/Library/Logs/WaveFlow`, so
+rebuilding or replacing the app keeps them.
 
 Gatekeeper blocks the first double-click on an unsigned app — right-click it, choose **Open**
 once, and it opens normally after that.
@@ -237,7 +244,8 @@ Runtime; the wizard's *Install GPU support* button swaps it in.
 
 You can close the terminal: the app moves itself to the background. Finishing setup adds
 **WaveFlow** to the Start menu and the desktop — start it from there after that. Everything it
-downloads or writes (model, logs, settings) stays inside the `WaveFlow` folder.
+downloads or writes (model, logs, settings) stays inside the `WaveFlow` folder — or, for the
+`.exe`, in the folder the `.exe` sits in.
 
 Without the wizard, run the engine by hand:
 
@@ -257,7 +265,10 @@ and CPU threads, microphone with a live level meter and a sensitivity slider, ho
 Burst mode, stop-after-silence, start with Windows, overlay skin, debug recording, vocabulary,
 **Uninstall**, and *Run setup again…*.
 
-The `.exe` build cannot start the engine itself yet — use it with Docker or a remote server.
+**The `.exe` and the Mac `.app` run the engine themselves.** They start a second copy of
+themselves in engine mode (`WaveFlow.exe --serve …`) and stop it when you quit. Tested: the built
+`.exe` with ONNX · CPU. Not tested yet: ONNX · GPU from the `.exe`, and the engine from a built
+Mac `.app`.
 
 ## B. This PC or onsite server — Docker
 
