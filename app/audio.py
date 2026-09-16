@@ -11,6 +11,32 @@ import wave
 import numpy as np
 import sounddevice as sd
 
+
+class MicPermissionError(RuntimeError):
+    """macOS has not granted the microphone, so opening an input would block forever.
+
+    `.status` is "denied" or "undetermined" — the caller shows a different thing for each: one
+    needs a trip to System Settings, the other only needs asking.
+    """
+
+    def __init__(self, status: str):
+        super().__init__(f"microphone permission {status}")
+        self.status = status
+
+
+def mic_permission() -> str:
+    """"granted" | "denied" | "undetermined" | "unknown", via osbridge.
+
+    Imported lazily so this module keeps working for anything that only wants WAV helpers, and so
+    a broken osbridge degrades to "granted" — the historical behaviour — rather than taking audio
+    down with it.
+    """
+    try:
+        import osbridge
+        return osbridge.microphone_status()
+    except Exception:
+        return "granted"
+
 STT_SR = 16000
 
 
@@ -136,6 +162,17 @@ class MicStream:
         return float(np.clip(floor * 3.0, 0.004, 0.06))
 
     def start(self):
+        """Open the input.
+
+        Raises MicPermissionError when macOS has not granted the microphone. Checking FIRST is
+        the whole point: with permission undecided CoreAudio does not fail and does not time out —
+        the constructor below blocks forever, waiting for a prompt that a process with no bundle
+        and no usage string can never show. Isolated on real hardware 2026-09-16: still blocked
+        after 12 seconds. An error the caller can render beats a frozen window.
+        """
+        status = mic_permission()
+        if status in ("denied", "undetermined"):
+            raise MicPermissionError(status)
         self.chunks = []
         self._stream = sd.InputStream(samplerate=self.sr, channels=self.ch,
                                       dtype="float32", device=self.device,

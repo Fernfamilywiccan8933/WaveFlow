@@ -51,6 +51,8 @@ CONTRACT = {
     "open_path": ["path"],
     "autostart_enabled": [],
     "set_autostart": ["on"],
+    "microphone_status": [],
+    "request_microphone": ["callback"],
     "missing_permissions": [],
     "open_permission_settings": ["name"],
     "permission_note": [],
@@ -148,6 +150,62 @@ check("win.py delegates to waveflow", "import waveflow" in text, True)
 # implementation. Match what a real duplicate would contain.
 check("win.py has no SendInput copy", "user32.SendInput(" in text, False)
 check("win.py defines no INPUT struct", "class INPUT" in text, False)
+
+
+# --- the microphone must never BLOCK the app -----------------------------------------------
+# On macOS, with permission undecided, CoreAudio does not fail and does not time out:
+# sd.InputStream(...) blocks forever waiting for a prompt that a process with no bundle and no
+# usage string can never show. Isolated on real hardware 2026-09-16 — still blocked after 12
+# seconds. So the permission is READ first and the caller gets an error it can render.
+import time  # noqa: E402
+
+import audio  # noqa: E402
+
+
+class _FakeStream:
+    """Stands in for sd.InputStream. If the gate ever lets a blocked state through, this records
+    it — the real thing would hang here instead, which no test can catch."""
+
+    opened = []
+
+    def __init__(self, **kw):
+        _FakeStream.opened.append(kw)
+
+    def start(self):
+        pass
+
+
+_real_status, _real_sd = audio.mic_permission, audio.sd
+try:
+    audio.sd = type("sd", (), {"InputStream": _FakeStream})
+    for _status, _should_raise in (("granted", False), ("unknown", False),
+                                   ("denied", True), ("undetermined", True)):
+        audio.mic_permission = (lambda s=_status: s)
+        m = audio.MicStream.__new__(audio.MicStream)
+        m.device, m.sr, m.ch, m.chunks, m._stream = None, 16000, 1, [], None
+        m._cb = lambda *a: None
+        _FakeStream.opened.clear()
+        _t0 = time.time()
+        try:
+            m.start()
+            _raised = None
+        except audio.MicPermissionError as e:
+            _raised = e.status
+        _ms = (time.time() - _t0) * 1000
+        check(f"mic {_status}: raises rather than blocking", _raised == _status, _should_raise)
+        check(f"mic {_status}: answers immediately ({_ms:.0f}ms)", _ms < 500, True)
+        # The real cost of getting this wrong: a stream opened in a state that blocks forever.
+        check(f"mic {_status}: stream opened only when it is safe",
+              bool(_FakeStream.opened), not _should_raise)
+    # the error carries WHICH state, because the two need different answers from the user
+    audio.mic_permission = lambda: "denied"
+    try:
+        m = audio.MicStream.__new__(audio.MicStream)
+        m.start()
+    except audio.MicPermissionError as e:
+        check("the error says which state", e.status, "denied")
+finally:
+    audio.mic_permission, audio.sd = _real_status, _real_sd
 
 if FAILS:
     print("OSBRIDGE_FAIL\n" + "\n".join(FAILS))

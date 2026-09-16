@@ -37,7 +37,14 @@ for hw in (ALL, BARE):
 loc = {e.engine: e for e in S.engines_for("local", "", BARE)}
 check("local: ONNX CPU available", loc["onnx-cpu"].available, True)
 check("local: ONNX GPU offered", loc["onnx-gpu"].available, True)
-check("local: ONNX GPU without DirectML says what to install", "onnxruntime-directml" in loc["onnx-gpu"].reason, True)
+# The GPU story is per-OS, so the assertion has to be too. DirectML does not exist on a Mac and
+# CoreML does not exist on Windows; asserting one on the other machine is asserting a bug.
+if S.IS_MAC:
+    check("mac: ONNX GPU is offered but off, with CoreML named as the reason",
+          (loc["onnx-gpu"].available, "CoreML" in loc["onnx-gpu"].reason), (False, True))
+else:
+    check("local: ONNX GPU without DirectML says what to install",
+          "onnxruntime-directml" in loc["onnx-gpu"].reason, True)
 check("local: NeMo off, points to Docker", (loc["nemo"].available, "Docker" in loc["nemo"].reason), (False, True))
 dk = {e.engine: e for e in S.engines_for("docker", "", BARE)}
 check("docker w/o Docker: all off", [e.available for e in dk.values()], [False, False, False])
@@ -70,8 +77,9 @@ check("onsite venv: threads in command", "--threads 5" in S.build_plan(c).comman
 
 # --- plans ---------------------------------------------------------------------------------
 pl = S.build_plan(S.Choices(option="local", engine="onnx-gpu"))
-check("local GPU = DirectML fp32 on loopback",
-      all(x in pl.commands[0] for x in ("--device dml", "--onnx-quant fp32", "--host 127.0.0.1")), True)
+_dev = "--device coreml" if S.IS_MAC else "--device dml"
+check("local GPU = this OS's accelerator, fp32, on loopback",
+      all(x in pl.commands[0] for x in (_dev, "--onnx-quant fp32", "--host 127.0.0.1")), True)
 check("local has no token", (pl.token, pl.url), ("", "http://127.0.0.1:8756"))
 for eng, port, svc in (("onnx-cpu", 8756, "waveflow"), ("onnx-gpu", 8759, "waveflow-onnx-gpu"),
                        ("nemo", 8757, "waveflow-nemo")):

@@ -12,7 +12,9 @@ Three things have to be true at once or the check is worthless:
 import builtins, ctypes, os, sys, types
 from pathlib import Path
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
-sys.path.insert(0, r"F:\AI_Projects\WaveFlow\app")
+# Its own parent, not a hardcoded absolute path — that resolved only by luck of the working
+# directory, and on a Mac it does not exist at all (found 2026-09-16).
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 sys.platform = "darwin"                       # (1) before any app module is imported
 sys.modules.pop("ctypes.wintypes", None)      # (2)
@@ -36,7 +38,14 @@ for name in ("sounddevice", "pyperclip"):
     sys.modules.setdefault(name, m)
 
 _real = builtins.__import__
-BLOCKED = {"winreg", "uiautomation", "comtypes", "comtypes.client", "win32api", "win32com"}
+# pyobjc is blocked too. The assertions at the end describe the DEGRADE path — what the
+# backend does when pyobjc is absent — and on Windows it is absent anyway, so they passed
+# for free. On a real Mac, where the README tells you to install pyobjc, the backend is
+# live: the calls take the working path and the assertions fail. Worse, type_text() would
+# send real keystrokes into whatever window has focus. Caught on a Mac 2026-09-16.
+PYOBJC = {"AVFoundation", "AppKit", "Quartz", "Foundation", "ApplicationServices", "objc"}
+BLOCKED = {"winreg", "uiautomation", "comtypes", "comtypes.client", "win32api",
+           "win32com"} | PYOBJC
 def _fake(name, g=None, l=None, fromlist=(), level=0):
     if name == "ctypes.wintypes" or (name == "ctypes" and fromlist and "wintypes" in fromlist):
         raise ValueError("_type_ 'v' not supported")
@@ -69,8 +78,11 @@ print(f"  data dir         : {osbridge.app_data_dir()}")
 print(f"  os_theme()       : {osbridge.os_theme()}")
 print(f"  permissions      : {[n for n, _ in osbridge.missing_permissions()]}")
 assert osbridge.NAME == "macos", f"wrong backend: {osbridge.NAME}"
-# and the degrade-don't-raise contract holds with no pyobjc present
-assert osbridge.type_text("hi") == 0
+# The DEGRADE path, with pyobjc blocked above: every call must report "did not happen"
+# rather than raise. This is the contract that lets the rest of the app stay
+# platform-blind. It says nothing about whether the real backend works — only a Mac
+# with pyobjc installed can show that, and it is not what this harness simulates.
+assert osbridge.type_text("hi") == 0, "pyobjc is not blocked: this just typed for real"
 assert osbridge.paste_text("hi") is False
 assert osbridge.caret_rect() is None
 assert osbridge.inject_text("hi") == "failed"

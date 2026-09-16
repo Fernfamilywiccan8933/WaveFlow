@@ -31,7 +31,8 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import osbridge  # noqa: E402
-from audio import MicStream, ReplayMic, clean_input_devices, float_to_wav16k  # noqa: E402
+from audio import (MicPermissionError, MicStream, ReplayMic,  # noqa: E402
+                   clean_input_devices, float_to_wav16k)
 from icons import app_icon, tray_icon  # noqa: E402
 # Only the PORTABLE half of stt is imported by name. Typing, backspacing, focusing and reading a
 # window title now go through osbridge, because their Windows bodies live in stt and their macOS
@@ -1542,6 +1543,19 @@ class WaveFlow(QWidget):
                 self.mic = MicStream(device=self.device)
             self.mic.start()
             log.info("mic OPEN device=%s sr=%s ch=%s", self.device, self.mic.sr, self.mic.ch)
+        except MicPermissionError as e:
+            # Telling someone to pick another device when the real answer is a permission
+            # prompt sends them round in circles through every microphone they own.
+            log.error("mic BLOCKED by permission: %s", e.status)
+            if e.status == "undetermined":
+                osbridge.request_microphone()
+                self.error_sig.emit("Allow the microphone, then press the hotkey again")
+            else:
+                self.error_sig.emit("Microphone is off for this app — System Settings → "
+                                    "Privacy & Security → Microphone")
+            self.state = "idle"
+            self.wave.active = False
+            return
         except Exception as e:
             log.error("mic open FAILED device=%s: %s", self.device, e)
             self.error_sig.emit(f"Mic failed ({e.__class__.__name__}) — right-click ⚙ to pick another device")

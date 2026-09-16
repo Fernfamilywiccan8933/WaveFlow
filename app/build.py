@@ -62,6 +62,9 @@ def main() -> int:
         "--add-data", f"{HERE / 'assets'}{SEP}assets",
     ]
     if IS_MAC:
+        # The usage strings this bundle cannot record without are in MAC_PLIST, applied by
+        # _mac_plist() after the build: PyInstaller accepts plist keys only through a .spec file,
+        # never the command line.
         args += [
             "--osx-bundle-identifier", "com.waveflow.client",
             "--collect-all", "objc",
@@ -90,6 +93,9 @@ def main() -> int:
             if out.is_dir() else out.stat().st_size)
     print(f"\nOK -> {out}  ({size // (1024 * 1024)} MB)")
     if IS_MAC:
+        # plist BEFORE signing: the signature must cover the final Info.plist, or macOS treats
+        # the bundle as modified after signing and refuses it.
+        _mac_plist(out)
         _mac_after(out)
     if opts.install is not None:
         _install(out, opts.install)
@@ -147,6 +153,47 @@ def _install(built: Path, where: str) -> None:
         print("double-click on an app that is not signed by a paid Apple account.")
         print("Then re-grant Accessibility and Input Monitoring: the permissions followed the")
         print("old copy, and to macOS this path is a different app.")
+
+
+MAC_PLIST = {
+    # Without this key macOS refuses the microphone request OUTRIGHT — it will not even show a
+    # prompt — and CoreAudio then blocks forever when the stream opens. A bundle built without it
+    # can never record, and fails in the most confusing way available: no error, no dialog, just
+    # a hang. Found on real hardware 2026-09-16.
+    #
+    # The text is what the user READS in the prompt, so it says what WaveFlow does and when,
+    # rather than "this app needs access".
+    "NSMicrophoneUsageDescription":
+        "WaveFlow listens while you hold your hotkey, so it can type what you say.",
+    "NSAppleEventsUsageDescription":
+        "WaveFlow types the words into whichever app you are using.",
+    # A menu-bar app: no Dock icon and nothing in the app switcher. The pill is the whole UI.
+    "LSUIElement": True,
+}
+
+
+def _mac_plist(app: Path) -> None:
+    """Write the usage strings into the built bundle's Info.plist.
+
+    Done AFTER the build because PyInstaller accepts plist additions only through a .spec file,
+    and this project builds from the command line. Signing happens after this, which matters: the
+    signature must cover the final plist or macOS treats the bundle as tampered with.
+    """
+    import plistlib
+
+    path = app / "Contents" / "Info.plist"
+    try:
+        data = plistlib.loads(path.read_bytes())
+    except Exception as e:
+        print(f"could not read {path}: {e} — the app will NOT be able to record.")
+        return
+    data.update(MAC_PLIST)
+    try:
+        path.write_bytes(plistlib.dumps(data))
+    except OSError as e:
+        print(f"could not write {path}: {e} — the app will NOT be able to record.")
+        return
+    print(f"Info.plist: added {', '.join(MAC_PLIST)}")
 
 
 def _mac_after(app: Path) -> None:

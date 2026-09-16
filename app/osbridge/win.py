@@ -166,6 +166,18 @@ def set_autostart(on: bool) -> None:
 
 
 # ---------------------------------------------------------------- permissions
+def microphone_status() -> str:
+    """Windows does not gate a desktop app's microphone the way macOS does, and opening an
+    input never blocks on a permission prompt. Always "granted"."""
+    return "granted"
+
+
+def request_microphone(callback=None) -> bool:
+    if callback:
+        callback(True)
+    return True
+
+
 def missing_permissions() -> list[tuple[str, str]]:
     """Windows asks for nothing. SendInput and RegisterHotKey work for any desktop process."""
     return []

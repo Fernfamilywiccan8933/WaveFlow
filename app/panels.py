@@ -108,7 +108,7 @@ class MicPanel(QWidget):
         if self._mic is not None:
             return
         try:
-            from audio import MicStream, resolve_device_name
+            from audio import MicPermissionError, MicStream, resolve_device_name
             name = self.device.currentData()
             dev = resolve_device_name(name)[0] if name else None
             self._mic = MicStream(device=dev)
@@ -116,6 +116,22 @@ class MicPanel(QWidget):
             self.tracker = S.LevelTracker()
             self._timer.start(50)
             self.status.setText("Speak to see the level. The white line marks where speech starts.")
+        except MicPermissionError as e:
+            # NOT a broken microphone, and saying so would send the user hunting for the wrong
+            # thing. 'undetermined' means macOS has simply never asked, so ask — the answer
+            # arrives on an AVFoundation queue, and the user presses Retry once they have
+            # answered. 'denied' cannot be re-prompted; only System Settings can undo it.
+            self._mic = None
+            if e.status == 'undetermined':
+                import osbridge
+                asked = osbridge.request_microphone()
+                self.status.setText(
+                    'Allow the microphone in the prompt, then press Start again.' if asked else
+                    'macOS cannot ask for the microphone from a plain python run. Build the app '
+                    '(python app/build.py --install) and open that instead.')
+            else:
+                self.status.setText('Microphone access is turned off for this app. '
+                                    'System Settings -> Privacy & Security -> Microphone.')
         except Exception as e:
             self._mic = None
             self.status.setText(f"Could not open this microphone: {e}")

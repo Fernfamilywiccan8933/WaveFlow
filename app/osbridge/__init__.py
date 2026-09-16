@@ -171,6 +171,22 @@ def set_autostart(on: bool) -> None:
 
 
 # ---------------------------------------------------------------- permissions (macOS only)
+def microphone_status() -> str:
+    """"granted" | "denied" | "undetermined" | "unknown".
+
+    ALWAYS check this before opening an audio input. On macOS an undecided permission makes
+    the stream constructor block forever rather than fail — no prompt, no timeout, no
+    error. Windows never gates this and answers "granted".
+    """
+    return _impl.microphone_status()
+
+
+def request_microphone(callback=None) -> bool:
+    """Ask for the microphone. Returns at once; callback(granted) fires later, and NOT on
+    the Qt thread. False means the request could not be made at all."""
+    return _impl.request_microphone(callback)
+
+
 def missing_permissions() -> list[tuple[str, str]]:
     """[(name, why)] for permissions this platform needs and does not have. Empty on Windows."""
     return _impl.missing_permissions()

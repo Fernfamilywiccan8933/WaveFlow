@@ -2,8 +2,12 @@
 the footer, and so Continue, opened below the bottom edge of a frameless window with no
 draggable edges."""
 import os, sys
+from pathlib import Path
 os.environ["QT_QPA_PLATFORM"]="offscreen"
-sys.path.insert(0, r"F:\AI_Projects\WaveFlow\app")
+# The file sits next to what it imports, so its own parent is the answer. A hardcoded absolute
+# path resolved only by luck of the working directory, and on a Mac it does not exist at all
+# (found 2026-09-16).
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from PySide6.QtWidgets import QApplication, QSizeGrip
 import wizard as W, settings as S2
 FAILS=[]

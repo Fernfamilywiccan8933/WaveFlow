@@ -49,8 +49,14 @@ with tempfile.TemporaryDirectory() as t:
         scheduled, autostart = [], [False]
         (root / "app" / "assets").mkdir()
         # REAL shortcuts (PowerShell + WScript.Shell), written into the temp folders only.
-        check("shortcuts created", S.create_shortcuts(), [])
-        check("both shortcuts exist and point at this copy", len(S.shortcuts_ours()), 2)
+        # Shortcuts are a Windows idea. On macOS an .app IS the icon, create_shortcuts()
+        # deliberately does nothing, and asserting two .lnk files appear would be asserting
+        # behaviour the app is right not to have.
+        if S.IS_WINDOWS:
+            check("shortcuts created", S.create_shortcuts(), [])
+            check("both shortcuts exist and point at this copy", len(S.shortcuts_ours()), 2)
+        else:
+            check("macOS makes no shortcuts", S.create_shortcuts(), [])
         foreign = t / "desktop" / "Other.lnk"
         foreign.write_text("not ours")
         autostart[0] = True

@@ -2,7 +2,9 @@
 import shutil, sys, tempfile
 from pathlib import Path
 
-sys.path.insert(0, r"F:\AI_Projects\WaveFlow\app")
+# Its own parent, not a hardcoded absolute path — that resolved only by luck of the working
+# directory, and on a Mac it does not exist at all (found 2026-09-16).
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 import build
 
 FAILS=[]

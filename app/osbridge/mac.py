@@ -487,8 +487,55 @@ def set_autostart(on: bool) -> None:
 
 
 # ---------------------------------------------------------------- permissions
+def microphone_status() -> str:
+    """"granted" | "denied" | "undetermined" | "unknown".
+
+    macOS gates audio input behind TCC, and when permission has not been decided CoreAudio does
+    not fail and does not time out — `sd.InputStream(...)` simply BLOCKS, forever, waiting for a
+    prompt that a process with no bundle and no usage string can never show. Isolated on real
+    hardware 2026-09-16: still blocked after 12 seconds, killed rather than returning.
+
+    So the state must be READ before an input is ever opened. AVFoundation answers immediately.
+    """
+    try:
+        from AVFoundation import AVCaptureDevice, AVMediaTypeAudio
+    except ImportError:
+        return "unknown"
+    try:
+        # 0 notDetermined, 1 restricted, 2 denied, 3 authorized
+        return {3: "granted", 2: "denied", 1: "denied", 0: "undetermined"}.get(
+            AVCaptureDevice.authorizationStatusForMediaType_(AVMediaTypeAudio), "unknown")
+    except Exception:
+        return "unknown"
+
+
+def request_microphone(callback=None) -> bool:
+    """Ask for the microphone. Returns at once; `callback(granted: bool)` fires later.
+
+    The callback arrives on an AVFoundation queue, NOT the Qt thread, so a caller that touches
+    widgets from it must hop across by itself.
+
+    False means the request could not even be made — on macOS that almost always means the
+    process has no Info.plist usage string. A plain `python` run never has one, which is exactly
+    why no prompt ever appeared from the README's source path.
+    """
+    try:
+        from AVFoundation import AVCaptureDevice, AVMediaTypeAudio
+    except ImportError:
+        return False
+    try:
+        AVCaptureDevice.requestAccessForMediaType_completionHandler_(
+            AVMediaTypeAudio,
+            (lambda granted: callback(bool(granted))) if callback else (lambda granted: None))
+        return True
+    except Exception:
+        return False
+
+
 def missing_permissions() -> list[tuple[str, str]]:
     out = []
+    if microphone_status() in ("denied", "undetermined"):
+        out.append(("Microphone", "so WaveFlow can hear you at all"))
     if not _has_accessibility():
         out.append(("Accessibility",
                     "so WaveFlow can type the words into the app you are using"))
