@@ -10,6 +10,23 @@ Engine: NVIDIA **Parakeet TDT 0.6B v2** (English), via ONNX Runtime (default) or
 
 > Status: v1. Windows client only. English only.
 
+## Why WaveFlow
+
+Most local dictation apps run the engine on the machine you type on. WaveFlow can, but it does not
+have to: point it at a box that has the GPU, and dictate from a thin laptop.
+
+| | Typical local dictation app | WaveFlow |
+|---|---|---|
+| Where the engine runs | this PC only | this PC, a server in your house, or your own VPS |
+| Setting up that server | you do it by hand | the wizard installs it **over SSH** and tests it |
+| Reaching it from outside | — | token required; the server refuses a non-loopback bind without one |
+| While you speak | usually types everything at the end | types as you talk, and **never rewrites what it already typed** |
+| Removing it | leaves files behind | lists everything it installed, removes only that, server included |
+| Numbers in this README | "3x faster" | measured, with the commands to repeat them |
+
+It is GPL-3.0, English-only, Windows-only today, and the engine is NVIDIA Parakeet TDT 0.6B v2 —
+not Whisper.
+
 ## What it looks like
 
 The overlay while you talk — two skins, switch any time in Settings:
