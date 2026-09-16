@@ -1035,15 +1035,42 @@ def main():
                                 "CPUExecutionProvider"]}[args.device]
         if args.device == "coreml" and "CoreMLExecutionProvider" not in ort.get_available_providers():
             # Said plainly rather than letting ORT fall back silently and leave the operator
-            # wondering why "GPU" performs exactly like CPU.
-            print("CoreML not available in this onnxruntime build — running on CPU instead. "
-                  "For the GPU: pip uninstall onnxruntime && pip install onnxruntime-silicon",
-                  flush=True)
+            # wondering why "GPU" performs exactly like CPU. The official onnxruntime wheel for
+            # macOS already carries CoreML, so the repair is to reinstall it, not to fetch some
+            # other package.
+            print("CoreML is not in this onnxruntime build — running on CPU instead. "
+                  "To repair: pip install --upgrade --force-reinstall onnxruntime", flush=True)
             providers = ["CPUExecutionProvider"]
-        model = onnx_asr.load_model("nemo-parakeet-tdt-0.6b-v2", args.onnx_dir or None,
-                                    quantization=None if args.onnx_quant == "fp32" else "int8",
-                                    sess_options=so, providers=providers)
-        model_name = f"parakeet-tdt-0.6b-v2-onnx-{args.onnx_quant}-{args.device}"
+
+        def _load(provs):
+            return onnx_asr.load_model("nemo-parakeet-tdt-0.6b-v2", args.onnx_dir or None,
+                                       quantization=None if args.onnx_quant == "fp32" else "int8",
+                                       sess_options=so, providers=provs)
+
+        device_used = args.device
+        try:
+            model = _load(providers)
+        except Exception as e:
+            # An accelerator that cannot load this graph must not take the whole server down.
+            #
+            # Real failure, Apple Silicon 2026-09-16: CoreML aborted inside onnxruntime with
+            # "is_in_range(access_tensor_rank) was false ... not in valid range [-2, 1]" — an
+            # internal bounds assert hit while it partitioned the graph. The operator saw only
+            # "the engine stopped", which is true and useless. Listing CPUExecutionProvider as a
+            # fallback does NOT cover this: that handles ops CoreML declines, not a crash while
+            # deciding. The only safe answer is to load again on the CPU and say what happened.
+            if args.device == "cpu":
+                raise
+            print(f"{args.device} could not load this model ({type(e).__name__}: "
+                  f"{str(e).strip().splitlines()[0][:160]})", flush=True)
+            print("Falling back to CPU. The engine works; it is just not using the accelerator.",
+                  flush=True)
+            device_used = "cpu"
+            model = _load(["CPUExecutionProvider"])
+
+        model_name = f"parakeet-tdt-0.6b-v2-onnx-{args.onnx_quant}-{device_used}"
+        if device_used != args.device:
+            model_name += f" (asked for {args.device})"
         print(f"loaded {model_name} threads={args.threads} "
               f"available={ort.get_available_providers()}", flush=True)
     else:

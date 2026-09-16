@@ -238,12 +238,21 @@ def engines_for(option: str, method: str, hw: Hardware) -> list[EngineChoice]:
         # does not exist on a Mac, and CoreML does not exist on Windows. Same engine, different
         # accelerator, different install.
         if IS_MAC:
+            # OFFERED BUT OFF. Tried on Apple Silicon 2026-09-16: CoreML aborts inside
+            # onnxruntime while partitioning this graph —
+            #   "is_in_range(access_tensor_rank) was false ... valid range [-2, 1]"
+            # That is a bounds assert in ORT itself, not something a setting here can
+            # avoid, and it happens before any audio is seen. The server falls back to CPU
+            # rather than dying, but offering it as a working choice would be a lie.
+            #
+            # It stays VISIBLE with the reason, per this project's rule that an engine
+            # which cannot run somewhere is shown greyed with the cause, never dropped.
+            # Apple Silicon CPU is genuinely quick, so little is lost.
             out.append(EngineChoice("onnx-gpu", ENGINE_NAMES["onnx-gpu"],
-                                    "fp32 · 2.4 GB · CoreML (Apple Silicon or Intel Mac GPU)",
-                                    hw.coreml,
-                                    "" if hw.coreml else
-                                    "this onnxruntime has no CoreML support — reinstall the "
-                                    "official wheel"))
+                                    "fp32 · 2.4 GB · CoreML", False,
+                                    "CoreML cannot run this model — onnxruntime aborts "
+                                    "while preparing it. Apple Silicon CPU is fast; use "
+                                    "ONNX · CPU."))
         else:
             out.append(EngineChoice("onnx-gpu", ENGINE_NAMES["onnx-gpu"],
                                     "fp32 · 2.4 GB · DirectML (any DirectX 12 GPU)", True,
