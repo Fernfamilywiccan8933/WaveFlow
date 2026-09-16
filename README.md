@@ -79,7 +79,7 @@ venv/bin/python app/waveflow.py
 **Or make a double-clickable app**
 
 ```bash
-venv/bin/python app/build.py        # -> dist/WaveFlow.app
+venv/bin/python app/build.py   # -> dist/WaveFlow.app
 ```
 
 Gatekeeper blocks the first double-click on an unsigned app. Right-click it, choose **Open**
