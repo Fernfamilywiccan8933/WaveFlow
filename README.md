@@ -63,7 +63,7 @@ Compare it with `WaveFlow.exe.sha256` beside the download.
 
 **Download the app**
 
-No prebuilt `.app` yet. A Mac bundle has to be built on a Mac, and none has been published. The
+No prebuilt `.app` yet. A Mac bundle can only be built on a Mac, and none has been published. The
 command below builds one in about a minute.
 
 **Install from Terminal**

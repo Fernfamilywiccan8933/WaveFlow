@@ -18,6 +18,7 @@ from pathlib import Path
 from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtGui import QGuiApplication, QKeySequence
 from PySide6.QtWidgets import (QCheckBox, QDialog, QFrame, QGridLayout, QHBoxLayout,
+                               QScrollArea,
                                QKeySequenceEdit, QLabel, QLineEdit, QMessageBox,
                                QPushButton, QSpinBox, QStackedWidget, QTextEdit, QVBoxLayout, QWidget)
 
@@ -25,7 +26,7 @@ import remote_install as RI
 import setup_logic as S
 from panels import MicPanel, SkinPicker
 from wizard_ui import (BAD, BLUSH, MINT, SKY, VIO, WARN, Card, CheckRow, Segmented, StepItem, TitleBar,
-                       round_window_corners)
+                       fit_to_screen, round_window_corners)
 
 STEPS = ["Welcome", "Where it runs", "Configure", "Test connection", "Hotkey, mic & look"]
 
@@ -111,7 +112,7 @@ class SetupWizard(QDialog):
         self.setWindowTitle("WaveFlow setup")
         self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
         self.setStyleSheet(QSS)
-        self.resize(1040, 660)
+        self.resize(1040, 660)          # refit in showEvent, once the pages exist
         self.cfg = dict(cfg)
         self.engine = engine                  # LocalEngine owned by the app
         self.devices_fn = devices_fn
@@ -151,7 +152,11 @@ class SetupWizard(QDialog):
 
         rail = QFrame()
         rail.setObjectName("rail")
-        rail.setFixedWidth(212)
+        # Not setFixedWidth: on a narrow screen a fixed rail is 200px the content can
+        # never borrow, and the window ends up wider than the display with no way to
+        # shrink it. A maximum lets it give ground when it has to.
+        rail.setMinimumWidth(150)
+        rail.setMaximumWidth(212)
         rl = QVBoxLayout(rail)
         rl.setContentsMargins(10, 16, 10, 16)
         rl.setSpacing(2)
@@ -167,7 +172,22 @@ class SetupWizard(QDialog):
         body.addWidget(rail)
 
         self.stack = QStackedWidget()
-        body.addWidget(self.stack, 1)
+        # A QStackedWidget reports the LARGEST minimum of all its pages, and those pages made it
+        # 1130x870 — bigger than the window ever asked for, so resize() was silently ignored and
+        # on a smaller screen the footer (and Continue) sat below the bottom edge with no
+        # draggable frame to fix it. Reported from a real Mac, 2026-09-15.
+        # A scroll area breaks that chain: the window may now be any size, and content that no
+        # longer fits scrolls instead of shoving the window off the screen.
+        _scroll = QScrollArea()
+        _scroll.setWidgetResizable(True)
+        _scroll.setFrameShape(QFrame.NoFrame)
+        _scroll.setWidget(self.stack)
+        _scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        # With widgetResizable a QScrollArea adopts its widget's minimum as its own, which
+        # defeats the whole point: the window still could not shrink. An explicit small
+        # minimum is what actually lets content be larger than the view and scroll.
+        _scroll.setMinimumSize(360, 240)
+        body.addWidget(_scroll, 1)
         self.pages = [self._page_welcome(), self._page_where(), self._page_configure(),
                       self._page_test(), self._page_hotkey()]
         for p in self.pages:
@@ -175,8 +195,20 @@ class SetupWizard(QDialog):
         self.step = 0
         self.go(0)
 
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        place = getattr(self, "_fit_place_grip", None)
+        if place:
+            place()
+
     def showEvent(self, e):
         super().showEvent(e)
+        # AFTER the pages are built: a flat resize() in __init__ is undone by the layout, and
+        # on a smaller screen the footer (and Continue) then sits below the bottom edge of a
+        # window with no draggable frame. Real Mac, 2026-09-15.
+        if not getattr(self, '_fitted', False):
+            self._fitted = True
+            fit_to_screen(self, 1040, 660)
         round_window_corners(self)
 
     # ------------------------------------------------------------ shell
@@ -905,10 +937,25 @@ class SetupWizard(QDialog):
             w = QWidget()
             w.setLayout(r)
             self.perm_rows.addWidget(w)
-        # Said out loud, because otherwise the app looks broken after every update.
-        self.perm_note.setText(osbridge.permission_note() if missing else
-                               "All set. macOS forgets these whenever the app file changes, "
-                               "so re-check after an update.")
+        # Running from source, macOS attributes permissions to the HOST BINARY — the Python
+        # interpreter, launched by Terminal — never to "WaveFlow", because as far as the OS is
+        # concerned WaveFlow is a script that python happens to be running. So the Privacy list
+        # shows "Terminal" or "Python" and the user quite reasonably concludes the wrong app is
+        # asking. Reported from a real Mac, 2026-09-15. Building the .app is the only real fix,
+        # so say that here instead of letting them hunt for an entry that cannot exist yet.
+        import sys as _sys
+        self.perm_note.setTextFormat(Qt.RichText)
+        if not getattr(_sys, "frozen", False):
+            self.perm_note.setText(
+                "Running from source, so macOS asks on behalf of <b>Python</b> or "
+                "<b>Terminal</b> — tick those, not &ldquo;WaveFlow&rdquo;. WaveFlow is not an app "
+                "to macOS until you build one:<br>"
+                "<code>venv/bin/python app/build.py</code><br>"
+                "After that the permissions are named WaveFlow and stay with it.")
+        else:
+            self.perm_note.setText(osbridge.permission_note() if missing else
+                                   "All set. macOS forgets these whenever the app file changes, "
+                                   "so re-check after an update.")
 
     def _start_mic(self):
         if self.step == 4:

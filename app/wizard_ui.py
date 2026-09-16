@@ -539,6 +539,45 @@ class NavItem(QAbstractButton):
         p.drawText(QRectF(38, 0, r.width() - 40, r.height()), Qt.AlignVCenter | Qt.AlignLeft, self.label)
 
 
+def fit_to_screen(dialog, want_w: int, want_h: int, margin: int = 80) -> None:
+    """Size a frameless dialog to fit the screen it is on, centre it, and let it be resized.
+
+    The wizard and Settings both called `resize(1040, 660)` flat. On a Mac that is larger than the
+    usable area of a 13-inch display once the menu bar and Dock are removed, so the window opened
+    with its footer — and therefore Continue — off the bottom of the screen, and there was no way
+    to recover: FramelessWindowHint removes the title bar, and with it the edges you would
+    normally drag. Reported from a real Mac, 2026-09-15.
+
+    So: clamp to what the screen actually offers, centre it, and add a grip so nobody is trapped
+    again whatever their display.
+    """
+    from PySide6.QtWidgets import QApplication, QSizeGrip
+
+    screen = dialog.screen() or QApplication.primaryScreen()
+    w, h = want_w, want_h
+    if screen is not None:
+        area = screen.availableGeometry()      # already excludes menu bar, Dock and taskbar
+        w = min(want_w, max(560, area.width() - margin))
+        h = min(want_h, max(420, area.height() - margin))
+    dialog.resize(w, h)
+
+    grip = QSizeGrip(dialog)
+    grip.resize(16, 16)
+    dialog._fit_grip = grip                    # hold a reference or Qt collects it
+
+    def place():
+        grip.move(dialog.width() - 18, dialog.height() - 18)
+        grip.raise_()
+
+    place()
+    dialog._fit_place_grip = place             # callers re-run this from resizeEvent
+
+    if screen is not None:
+        area = screen.availableGeometry()
+        dialog.move(area.x() + (area.width() - w) // 2,
+                    area.y() + (area.height() - h) // 2)
+
+
 def round_window_corners(widget):
     """Windows 11: rounded corners + native shadow for a frameless window (no-op elsewhere)."""
     if sys.platform != "win32":

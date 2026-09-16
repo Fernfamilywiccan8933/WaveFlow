@@ -18,6 +18,7 @@ import secrets
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -741,6 +742,34 @@ class Check:
     detail: str = ""
 
 
+def _resolves(host: str, timeout: float = 6.0) -> bool:
+    """Can this machine turn `host` into an address within `timeout`?
+
+    getaddrinfo cannot be interrupted, so it is run on a daemon thread and simply abandoned if it
+    overruns. The thread dies with the process; the point is that the CALLER gets an answer and
+    the UI never freezes waiting for a name that is never coming.
+    """
+    import socket
+    try:
+        ipaddress.ip_address(host)
+        return True                      # a literal address needs no lookup
+    except ValueError:
+        pass
+    done: list[bool] = []
+
+    def lookup():
+        try:
+            socket.getaddrinfo(host, None)
+            done.append(True)
+        except Exception:
+            done.append(False)
+
+    t = threading.Thread(target=lookup, daemon=True)
+    t.start()
+    t.join(timeout)
+    return bool(done and done[0])
+
+
 def run_checks(url: str, token: str, sample: Path = SAMPLE_WAV, timeout: float = 6.0,
                require_token: bool = False) -> tuple[list[Check], str]:
     """The same 4 checks for every option. Returns (checks, one-line verdict)."""
@@ -748,6 +777,19 @@ def run_checks(url: str, token: str, sample: Path = SAMPLE_WAV, timeout: float =
     checks = [Check("Server answers", None), Check("Engine ready", None),
               Check("Token accepted", None), Check("Sample clip transcribed", None)]
     hdr = {"Authorization": f"Bearer {token}"} if token else {}
+    # Resolve the name FIRST, with a timeout of its own.
+    #
+    # requests' `timeout` covers connect and read — it does NOT cover name resolution, because
+    # getaddrinfo() is a blocking C call that no Python timeout can interrupt. So a name that
+    # never resolves (a .local host on a network without mDNS, a Tailscale name with Tailscale
+    # not running here) hangs the whole check with no message and no way out. Reported from a
+    # real Mac, 2026-09-15: "the test is hanging".
+    host = urlparse(url).hostname or ""
+    if host and not _resolves(host, timeout):
+        checks[0] = Check("Server answers", False, "name not found")
+        return checks, (f"Can't find “{host}” from this machine. Check the spelling, and "
+                        f"that this machine can reach it: a .local name needs the server on the "
+                        f"same network, and a Tailscale name needs Tailscale running here too.")
     try:
         t0 = time.perf_counter()
         r = requests.get(f"{url}/health", timeout=timeout)

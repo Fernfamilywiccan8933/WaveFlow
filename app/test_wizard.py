@@ -119,7 +119,12 @@ def checks_with(get=None, post=None, **kw):
     import requests
     with mock.patch.object(requests, "get", side_effect=get if callable(get) else (lambda *a, **k: get)), \
          mock.patch.object(requests, "post", side_effect=post if callable(post) else (lambda *a, **k: post)):
-        return S.run_checks("http://x:8756", kw.pop("token", "tok"), **kw)
+        # A LITERAL ADDRESS, not a name. run_checks now resolves the host before anything else,
+        # because getaddrinfo cannot be interrupted by requests' timeout and an unresolvable name
+        # hung the UI forever (real Mac, 2026-09-15). These tests mock HTTP but not DNS, so the
+        # old placeholder "x" made every one of them short-circuit on the lookup. An IP literal
+        # skips resolution entirely, which keeps these tests about HTTP, which is their subject.
+        return S.run_checks("http://127.0.0.1:8756", kw.pop("token", "tok"), **kw)
 
 
 def raise_(e):
@@ -307,6 +312,21 @@ check("connect rotation happens on the server", rot.kind, "server")
 check("connect rotation writes no env", (rot.env_path, rot.env_text), ("", ""))
 check("connect rotation names the new token", any("n" * 24 in c for c in rot.commands), True)
 check("connect rotation invents no compose command", any("docker" in c for c in rot.commands), False)
+
+
+# --- the hang fix itself: a name that never resolves must FAIL FAST, not block ------------
+# requests' timeout covers connect and read, never getaddrinfo. Before this, a .local name on a
+# network without mDNS froze the wizard with no message and no way out.
+import time as _t
+_t0 = _t.time()
+chk, verdict = S.run_checks("http://no-such-host-waveflow-test.invalid:8756", "tok", timeout=2.0)
+_el = _t.time() - _t0
+check("unresolvable host fails instead of hanging", chk[0].ok, False)
+check("and says the name was not found", chk[0].detail, "name not found")
+check("and returns within the timeout", _el < 8, True)
+check("and the message names the host", "no-such-host-waveflow-test.invalid" in verdict, True)
+check("an IP literal needs no lookup", S._resolves("127.0.0.1", 0.01), True)
+check("localhost resolves", S._resolves("localhost", 5.0), True)
 
 if FAILS:
     print("WIZARD_FAIL\n" + "\n".join(FAILS))

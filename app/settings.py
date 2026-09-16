@@ -18,6 +18,7 @@ from pathlib import Path
 from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtGui import QGuiApplication, QKeySequence
 from PySide6.QtWidgets import (QDialog, QDoubleSpinBox, QFrame, QGridLayout, QHBoxLayout, QKeySequenceEdit,
+                               QScrollArea,
                                QLineEdit, QMessageBox, QPushButton, QSpinBox, QStackedWidget, QTextEdit, QVBoxLayout,
                                QWidget)
 
@@ -25,7 +26,8 @@ import setup_logic as S
 from panels import MicPanel, SkinPicker, UninstallPanel, lbl
 from wizard import QSS as WIZARD_QSS
 from wizard import _to_qt
-from wizard_ui import BAD, MINT, Card, NavItem, Segmented, TitleBar, Toggle, round_window_corners
+from wizard_ui import (BAD, MINT, Card, NavItem, Segmented, TitleBar, Toggle, fit_to_screen,
+                       round_window_corners)
 
 VERSION = "1.0.0"
 PAGES = [("conn", "Connection"), ("eng", "Engine"), ("mic", "Microphone"), ("look", "Hotkey & look"),
@@ -120,7 +122,11 @@ class SettingsWindow(QDialog):
 
         rail = QFrame()
         rail.setObjectName("rail")
-        rail.setFixedWidth(200)
+        # Not setFixedWidth: on a narrow screen a fixed rail is 200px the content can
+        # never borrow, and the window ends up wider than the display with no way to
+        # shrink it. A maximum lets it give ground when it has to.
+        rail.setMinimumWidth(150)
+        rail.setMaximumWidth(200)
         rl = QVBoxLayout(rail)
         rl.setContentsMargins(10, 16, 10, 14)
         rl.setSpacing(2)
@@ -151,7 +157,22 @@ class SettingsWindow(QDialog):
         mv.addWidget(self.lead)
         mv.addSpacing(10)
         self.stack = QStackedWidget()
-        mv.addWidget(self.stack, 1)
+        # A QStackedWidget reports the LARGEST minimum of all its pages, and those pages made it
+        # 1130x870 — bigger than the window ever asked for, so resize() was silently ignored and
+        # on a smaller screen the footer (and Continue) sat below the bottom edge with no
+        # draggable frame to fix it. Reported from a real Mac, 2026-09-15.
+        # A scroll area breaks that chain: the window may now be any size, and content that no
+        # longer fits scrolls instead of shoving the window off the screen.
+        _scroll = QScrollArea()
+        _scroll.setWidgetResizable(True)
+        _scroll.setFrameShape(QFrame.NoFrame)
+        _scroll.setWidget(self.stack)
+        _scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        # With widgetResizable a QScrollArea adopts its widget's minimum as its own, which
+        # defeats the whole point: the window still could not shrink. An explicit small
+        # minimum is what actually lets content be larger than the view and scroll.
+        _scroll.setMinimumSize(360, 240)
+        mv.addWidget(_scroll, 1)
         self.foot = QWidget()
         fl = QHBoxLayout(self.foot)
         fl.setContentsMargins(0, 12, 0, 0)
@@ -182,8 +203,17 @@ class SettingsWindow(QDialog):
         self.go("conn")
         self._check_health()
 
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        place = getattr(self, "_fit_place_grip", None)
+        if place:
+            place()
+
     def showEvent(self, e):
         super().showEvent(e)
+        if not getattr(self, '_fitted', False):
+            self._fitted = True
+            fit_to_screen(self, 1000, 640)
         round_window_corners(self)
 
     def go(self, key):
