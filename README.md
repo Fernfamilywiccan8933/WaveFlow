@@ -1,4 +1,6 @@
-# WaveFlow
+<p align="center">
+  <img src="docs/banner.png" alt="WaveFlow — private, local voice dictation" width="880">
+</p>
 
 Private, local voice dictation for Windows. Press a hotkey, talk, and the words type live into
 whatever text box has focus. Speech recognition runs on **your** hardware — this PC, a server
