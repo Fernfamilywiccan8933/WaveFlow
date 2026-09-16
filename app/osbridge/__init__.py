@@ -113,6 +113,14 @@ def register_hotkey(hotkey_id: int, combo: str) -> bool:
     return _impl.register_hotkey(hotkey_id, combo)
 
 
+def hotkey_supported(combo: str) -> bool:
+    """Can this platform even express `combo` as a hotkey? Answers WITHOUT registering, so a
+    failed registration can be told apart: unsupported key vs taken / not permitted. The Mac
+    log once called an unparseable key a permission refusal, and the user re-granted a
+    permission that was never the problem."""
+    return _impl.hotkey_supported(combo)
+
+
 def unregister_hotkey(hotkey_id: int) -> None:
     _impl.unregister_hotkey(hotkey_id)
 

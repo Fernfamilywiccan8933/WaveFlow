@@ -53,6 +53,10 @@ def register_hotkey(hotkey_id: int, combo: str) -> bool:
     return False
 
 
+def hotkey_supported(combo: str) -> bool:
+    return False
+
+
 def unregister_hotkey(hotkey_id: int) -> None:
     return None
 

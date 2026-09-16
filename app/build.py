@@ -92,9 +92,13 @@ def main() -> int:
             *[a for m in ("Quartz", "AppKit", "ApplicationServices", "Foundation")
               for a in ("--collect-all", m)],
         ]
+        # FAIL without it. It used to be skipped silently, and the bundle shipped PyInstaller's
+        # placeholder icon in Finder and in the Privacy & Security lists the user has to search.
         icns = HERE / "assets" / "waveflow.icns"
-        if icns.exists():
-            args += ["--icon", str(icns)]
+        if not icns.exists():
+            print(f"BUILD FAILED: {icns} is missing. Make it with: venv/bin/python app/icons.py")
+            return 1
+        args += ["--icon", str(icns)]
     else:
         args += [
             "--onefile",
@@ -172,8 +176,8 @@ def _install(built: Path, where: str) -> None:
         print("Open it from Launchpad or Spotlight (Cmd+Space, type WaveFlow).")
         print("FIRST TIME: right-click it in Finder and choose Open — Gatekeeper blocks a")
         print("double-click on an app that is not signed by a paid Apple account.")
-        print("Then re-grant Accessibility and Input Monitoring: the permissions followed the")
-        print("old copy, and to macOS this path is a different app.")
+        print("If Accessibility or Input Monitoring show WaveFlow as ON but it still can't type or")
+        print("hear the hotkey: remove it from that list (− button) and add it again.")
 
 
 MAC_PLIST = {
@@ -217,25 +221,58 @@ def _mac_plist(app: Path) -> None:
     print(f"Info.plist: added {', '.join(MAC_PLIST)}")
 
 
-def _mac_after(app: Path) -> None:
-    """Ad-hoc sign, then say the one thing that would otherwise look like a bug.
+SIGN_NAME = "WaveFlow Local Signing"
 
-    Ad-hoc (`codesign -s -`) gives the bundle an identity for THIS build, so macOS will offer the
-    permission dialogs at all. It is not a Developer ID signature: the identity changes whenever
-    the binary changes, so macOS drops Accessibility and Input Monitoring on every rebuild. That
-    is expected, this script cannot fix it, and the operator has chosen not to buy an account.
+
+def _sign_identity() -> str:
+    """The certificate to sign with: $WAVEFLOW_SIGN_IDENTITY, else a keychain certificate named
+    SIGN_NAME, else "-" (ad-hoc).
+
+    Why it matters: an ad-hoc signature's designated requirement is the build's cdhash, which is
+    different on EVERY build. macOS stores that requirement with the Accessibility and Input
+    Monitoring grants, so after a rebuild the switch in System Settings still shows ON but belongs
+    to the old build — the running app is refused (Mac, 2026-09-16: `codesign -dr -` showed
+    `cdhash H"63ff…"`). A certificate, even a free self-signed one, makes the requirement
+    `identifier "com.waveflow.client" and certificate leaf = …`, which survives rebuilds.
+
+    `find-identity` WITHOUT -v: a self-signed certificate is "not trusted" as a CA, which -v hides,
+    but codesign signs with it perfectly well.
     """
+    want = os.environ.get("WAVEFLOW_SIGN_IDENTITY", "").strip()
+    if want:
+        return want
     try:
-        subprocess.run(["codesign", "--force", "--deep", "--sign", "-", str(app)],
-                       check=False, timeout=180)
-        print("ad-hoc signed.")
+        out = subprocess.run(["security", "find-identity", "-p", "codesigning"],
+                             capture_output=True, text=True, timeout=30).stdout
+    except Exception:
+        return "-"
+    return SIGN_NAME if f'"{SIGN_NAME}"' in out else "-"
+
+
+def _mac_after(app: Path) -> None:
+    """Sign, then say the one thing that would otherwise look like a bug."""
+    ident = _sign_identity()
+    try:
+        # No --identifier: with --deep it would stamp every nested library too. The bundle's own
+        # identifier comes from CFBundleIdentifier (--osx-bundle-identifier above).
+        r = subprocess.run(["codesign", "--force", "--deep", "--sign", ident, str(app)],
+                           check=False, timeout=300)
+        if r.returncode != 0 and ident != "-":
+            print(f"signing with '{ident}' failed — falling back to ad-hoc.")
+            ident = "-"
+            subprocess.run(["codesign", "--force", "--deep", "--sign", "-", str(app)],
+                           check=False, timeout=300)
+        print("ad-hoc signed." if ident == "-" else f"signed with '{ident}'.")
     except Exception as e:
-        print(f"could not ad-hoc sign ({e}) — macOS will complain harder on first launch.")
+        print(f"could not sign ({e}) — macOS will complain harder on first launch.")
     print("\nFirst launch on macOS:")
     print("  1. Right-click the app -> Open. Gatekeeper blocks a double-click on an unsigned app.")
     print("  2. Grant Microphone, then Accessibility, then Input Monitoring.")
-    print("  3. After EVERY rebuild, re-tick Accessibility and Input Monitoring: macOS ties them")
-    print("     to the exact app file, and this build is not signed by a paid account.")
+    if ident == "-":
+        print("  3. WARNING: ad-hoc signed. After EVERY rebuild, REMOVE WaveFlow from Accessibility")
+        print("     and Input Monitoring (the − button) and add it again. Switching the old entry")
+        print("     on is not enough: it belongs to the previous build.")
+        print(f"     To stop this, create a free certificate once — see README, '{SIGN_NAME}'.")
 
 
 if __name__ == "__main__":

@@ -1029,8 +1029,7 @@ class SetupWizard(QDialog):
         out.update(plan.config)
         if self._remote_install_mode():
             out["engine"] = {**out["engine"], "ssh_user": self.ssh_user, "folder": self.ssh_folder}
-        seq = self.hk.keySequence().toString()
-        out["hotkey_show"] = seq.replace("Meta", "windows").lower().replace(" ", "") or "ctrl+alt+w"
+        out["hotkey_show"] = _from_qt(self.hk.keySequence().toString())
         out["device_name"] = self.mic.device_name()
         out["mic_sensitivity"] = self.mic.sensitivity()
         out["skin"] = self.skin.value()
@@ -1046,4 +1045,8 @@ class SetupWizard(QDialog):
 
 
 def _to_qt(kb: str) -> str:
-    return "+".join(p.capitalize() if len(p) > 1 else p.upper() for p in (kb or "").split("+"))
+    return S.hotkey_to_qt(kb)
+
+
+def _from_qt(seq: str) -> str:
+    return S.qt_to_hotkey(seq) or "ctrl+alt+w"

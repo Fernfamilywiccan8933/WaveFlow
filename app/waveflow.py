@@ -298,6 +298,27 @@ def enable_liquid_glass(hwnd: int) -> bool:
         return False
 
 
+def ws_frame_text(op: int, raw) -> tuple[str, str]:
+    """Sort one websocket frame from recv_data(control_frame=True): ("close"|"skip"|"text", text).
+
+    PING, PONG and binary frames are never transcripts. control_frame=True surfaces the SERVER's
+    pings as well as our pongs (uvicorn pings every 20 s; websocket-client has already answered
+    it). Their random payload went into json.loads, raised UnicodeDecodeError, and killed the
+    reader exactly 20 s after the mic opened (Mac log 2026-09-16) — introduced by the change that
+    started reading pongs.
+
+    An empty text frame means the socket closed, normally by our own session end. Parsing it
+    raised JSONDecodeError and logged "stream rx died ... link is one-way" on every ordinary
+    close — a false alarm that reads exactly like the real failure."""
+    import websocket
+    if op == websocket.ABNF.OPCODE_CLOSE:
+        return "close", ""
+    if op != websocket.ABNF.OPCODE_TEXT:
+        return "skip", ""
+    text = raw.decode("utf-8", errors="replace") if isinstance(raw, (bytes, bytearray)) else (raw or "")
+    return ("text", text) if text else ("close", "")
+
+
 # ---------- system-registered hotkeys (Win32 RegisterHotKey — not a hook) ----------
 _MODS = {"ctrl": 2, "control": 2, "alt": 1, "shift": 4,
          "win": 8, "windows": 8, "meta": 8}
@@ -1396,8 +1417,11 @@ class WaveFlow(QWidget):
                 self._hk_filter.callbacks[hid] = (
                     lambda n=name, s=sig: (log.info("hotkey FIRED: %s", n), s.emit()))
                 results[name] = combo
-            elif IS_WINDOWS and not parse_combo(combo):
-                results[name] = f"unparseable: {combo}"
+            elif not osbridge.hotkey_supported(combo):
+                # Checked BEFORE blaming permissions: on a Mac an unsupported key used to be
+                # logged as "refused" and the user re-granted Input Monitoring for nothing.
+                results[name] = f"unsupported key: {combo}"
+                self.error_sig.emit(f"Hotkey '{combo}' can't be used — pick another in ⚙ Settings")
             else:
                 # Windows: another app already owns the chord. macOS: almost always Input
                 # Monitoring not granted — a permission problem, not a clash, and telling the
@@ -1406,7 +1430,7 @@ class WaveFlow(QWidget):
                     results[name] = f"IN USE by another app: {combo}"
                     self.error_sig.emit(f"Hotkey '{combo}' is taken — pick another in ⚙ Settings")
                 else:
-                    results[name] = f"refused: {combo}"
+                    results[name] = f"Input Monitoring not granted: {combo}"
                     self.error_sig.emit("Hotkey needs permission — grant WaveFlow "
                                         "Input Monitoring in System Settings → Privacy & Security")
         log.info("hotkeys (%s): %s", "RegisterHotKey" if IS_WINDOWS else "CGEventTap", results)
@@ -1646,17 +1670,12 @@ class WaveFlow(QWidget):
                     # the pongs are how the watchdog now tells a quiet link from a dead one.
                     op, raw = ws.recv_data(control_frame=True)
                     self._last_frame_t = time.time()
-                    if op == websocket.ABNF.OPCODE_PONG:
-                        continue
-                    if op == websocket.ABNF.OPCODE_TEXT:
-                        raw = raw.decode("utf-8", errors="replace")
-                    if op == websocket.ABNF.OPCODE_CLOSE or not raw:
-                        # Empty frame = the socket was closed, normally by our own session
-                        # end. Parsing it raised JSONDecodeError and logged "stream rx died
-                        # ... link is one-way" on every ordinary close — a false alarm that
-                        # reads exactly like the real failure it was written to catch.
+                    kind, text = ws_frame_text(op, raw)
+                    if kind == "close":
                         return
-                    m = _json.loads(raw)
+                    if kind == "skip":
+                        continue
+                    m = _json.loads(text)
                 except websocket.WebSocketTimeoutException:
                     # A quiet stretch is NOT a dead link. Belt-and-braces with the
                     # long read timeout above: even if one fires, keep listening —

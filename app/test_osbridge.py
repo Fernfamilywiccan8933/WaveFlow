@@ -43,6 +43,7 @@ CONTRACT = {
     "caret_rect": [],
     "register_hotkey": ["hotkey_id", "combo"],
     "unregister_hotkey": ["hotkey_id"],
+    "hotkey_supported": ["combo"],
     "needs_native_filter": [],
     "set_hotkey_callback": ["on_pressed"],
     "make_frameless": ["win_id"],
@@ -262,6 +263,78 @@ for cls in ("class GhostText", "class WaveFlow(QWidget)"):
     body = body[:body.index("setWindowFlags") + 600]
     check(f"{cls}: WA_MacAlwaysShowToolWindow set with its window flags",
           "WA_MacAlwaysShowToolWindow, True" in body, True)
+
+# --- server PINGs must not kill the stream reader (Mac, 2026-09-16: died exactly 20 s in) -------
+import json as _json  # noqa: E402
+
+import websocket  # noqa: E402
+
+A = websocket.ABNF
+check("a server PING with non-UTF-8 bytes is skipped", waveflow.ws_frame_text(A.OPCODE_PING, b"\xff\xfe\x00\x81"),
+      ("skip", ""))
+check("a PONG is skipped", waveflow.ws_frame_text(A.OPCODE_PONG, b"\x9c\x01"), ("skip", ""))
+check("a binary frame is skipped", waveflow.ws_frame_text(A.OPCODE_BINARY, b"\x00"), ("skip", ""))
+check("a CLOSE ends the reader", waveflow.ws_frame_text(A.OPCODE_CLOSE, b"\x03\xe8")[0], "close")
+check("an empty text frame ends the reader", waveflow.ws_frame_text(A.OPCODE_TEXT, b"")[0], "close")
+kind, text = waveflow.ws_frame_text(A.OPCODE_TEXT, '{"stable": "héllo"}'.encode("utf-8"))
+check("a text frame is decoded", (kind, _json.loads(text)), ("text", {"stable": "héllo"}))
+_rx = _wf[_wf.index("op, raw = ws.recv_data(control_frame=True)"):]
+check("the reader sorts frames BEFORE json.loads",
+      _rx.index("ws_frame_text(op, raw)") < _rx.index("_json.loads("), True)
+
+# --- hotkeys: every key the recorder can save must register on a Mac (finding 18) ----------------
+_names = (list("abcdefghijklmnopqrstuvwxyz0123456789") + [f"f{i}" for i in range(1, 21)]
+          + ["space", "tab", "return", "enter", "backspace", "esc", "del", "ins", "home", "end",
+             "pgup", "pgdown", "left", "right", "up", "down", "-", "=", "[", "]", ";", "'", ",", ".",
+             "/", "\\", "`"])
+_bad = [k for k in _names if mac._parse_combo(f"ctrl+alt+{k}") is None]
+check("mac parses every recorder key", _bad, [])
+check("mac: no two keys share a keycode", len({mac.HOTKEY_KEYS[k] for k in "abcdefghijklmnopqrstuvwxyz0123456789"}), 36)
+check("mac: the reported combos now parse",
+      [mac._parse_combo(c) is not None for c in ("windows+ctrl+m", "cmd+ctrl+m", "ctrl+alt+d", "ctrl+alt+1", "f5")],
+      [True] * 5)
+check("mac: M is kVK_ANSI_M (0x2E)", mac._parse_combo("ctrl+m")[1], 0x2E)
+check("mac: an unknown key is refused, never guessed", mac._parse_combo("ctrl+alt+é"), None)
+check("mac hotkey_supported matches the parser", mac.hotkey_supported("ctrl+alt+m"), True)
+_rh = _wf[_wf.index("if osbridge.register_hotkey(hid, combo):"):]
+check("an unsupported key is not blamed on permissions",
+      _rh.index("osbridge.hotkey_supported(combo)") < _rh.index("Input Monitoring"), True)
+
+# --- hotkeys: Qt's Ctrl/Meta swap on macOS (finding 20) -----------------------------------------
+import setup_logic as S  # noqa: E402
+
+check("mac: pressing ⌃⌥W (Qt 'Meta+Alt+W') saves ctrl+alt+w", S.qt_to_hotkey("Meta+Alt+W", mac=True), "ctrl+alt+w")
+check("mac: pressing ⌘⌥W (Qt 'Ctrl+Alt+W') saves cmd+alt+w", S.qt_to_hotkey("Ctrl+Alt+W", mac=True), "cmd+alt+w")
+check("mac: saved ctrl+alt+w loads as Qt Meta (⌃)", S.hotkey_to_qt("ctrl+alt+w", mac=True), "Meta+Alt+W")
+check("mac: an old 'windows' (⌘) config loads as Qt Ctrl (⌘)", S.hotkey_to_qt("windows+alt+w", mac=True), "Ctrl+Alt+W")
+check("windows: Qt Meta is the Windows key", S.qt_to_hotkey("Meta+Alt+W", mac=False), "windows+alt+w")
+check("windows: unchanged for ctrl", S.qt_to_hotkey("Ctrl+Alt+Space", mac=False), "ctrl+alt+space")
+check("only the first chord counts", S.qt_to_hotkey("Ctrl+A, Ctrl+B", mac=False), "ctrl+a")
+check("nothing recorded -> empty", S.qt_to_hotkey("", mac=True), "")
+import itertools  # noqa: E402
+
+for _mac in (True, False):
+    _mods = ["Ctrl", "Meta", "Alt", "Shift"]
+    for r in range(0, 5):
+        for combo in itertools.combinations(_mods, r):
+            for key in ("W", "Space", "F5", "1"):
+                seq = "+".join([*combo, key])
+                back = S.hotkey_to_qt(S.qt_to_hotkey(seq, mac=_mac), mac=_mac)
+                if back != seq:
+                    FAILS.append(f"  round trip ({'mac' if _mac else 'win'}): {seq} -> {back}")
+    # and every saved mac hotkey must parse on the Mac side
+    if _mac:
+        for combo in itertools.combinations(_mods, 2):
+            hk = S.qt_to_hotkey("+".join([*combo, "M"]), mac=True)
+            if mac._parse_combo(hk) is None:
+                FAILS.append(f"  mac cannot register what it saved: {hk}")
+check("Qt → config → mac flags: ⌃⌥W gives Control|Option, not Command",
+      mac._parse_combo(S.qt_to_hotkey("Meta+Alt+W", mac=True))[0], mac.MOD["ctrl"] | mac.MOD["alt"])
+for _f in ("settings.py", "wizard.py"):
+    _t = (Path(__file__).resolve().parent / _f).read_text(encoding="utf-8")
+    check(f"{_f} no longer hand-converts Meta", 'replace("Meta", "windows")' in _t, False)
+_st = (Path(__file__).resolve().parent / "settings.py").read_text(encoding="utf-8")
+check("settings saves coreml, not dml, for the Mac GPU", '"coreml" if S.IS_MAC else "dml"' in _st, True)
 
 if FAILS:
     print("OSBRIDGE_FAIL\n" + "\n".join(FAILS))

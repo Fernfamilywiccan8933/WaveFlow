@@ -174,12 +174,40 @@ def ico_bytes(sizes=ICO_SIZES) -> bytes:
     return head + table + b"".join(pngs)
 
 
+ICNS_PATH = ASSETS / "waveflow.icns"
+# (OSType, pixel size). PNG-payload types, readable by macOS 10.7+. Drawn from the vector
+# geometry at each size, so the 1024 px Retina entry is sharp — not an upscaled 256 px .ico frame.
+ICNS_TYPES = (("icp4", 16), ("icp5", 32), ("icp6", 64), ("ic07", 128), ("ic08", 256),
+              ("ic09", 512), ("ic10", 1024), ("ic11", 32), ("ic12", 64), ("ic13", 256), ("ic14", 512))
+
+
+def icns_bytes(types=ICNS_TYPES) -> bytes:
+    """A macOS .icns: 'icns' + total length, then (type, entry length, PNG) per size, big-endian.
+
+    Without it the Mac bundle showed PyInstaller's placeholder in Finder, notifications and the
+    Privacy & Security lists — the very lists the user must find WaveFlow in (Mac, 2026-09-16)."""
+    import struct
+    from PySide6.QtCore import QBuffer, QByteArray, QIODevice
+    cache, body = {}, b""
+    for ostype, s in types:
+        if s not in cache:
+            ba = QByteArray()
+            buf = QBuffer(ba)
+            buf.open(QIODevice.WriteOnly)
+            render(s).save(buf, "PNG")
+            cache[s] = bytes(ba)
+        body += ostype.encode("ascii") + struct.pack(">I", 8 + len(cache[s])) + cache[s]
+    return b"icns" + struct.pack(">I", 8 + len(body)) + body
+
+
 def main() -> int:
     from PySide6.QtGui import QGuiApplication
     _app = QGuiApplication.instance() or QGuiApplication(sys.argv)
     ASSETS.mkdir(exist_ok=True)
     ICO_PATH.write_bytes(ico_bytes())
     print(f"wrote {ICO_PATH} ({ICO_PATH.stat().st_size} bytes, sizes {ICO_SIZES})")
+    ICNS_PATH.write_bytes(icns_bytes())
+    print(f"wrote {ICNS_PATH} ({ICNS_PATH.stat().st_size} bytes, {len(ICNS_TYPES)} entries up to 1024 px)")
     return 0
 
 

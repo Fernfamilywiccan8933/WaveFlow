@@ -122,9 +122,23 @@ not.
 
 The wizard's last page lists all three with a button to each settings page.
 
-> **Re-grant two of them after every update.** WaveFlow is not signed by a paid Apple developer
-> account, and macOS ties Accessibility and Input Monitoring to the exact app file — so it forgets
-> them whenever that file changes. This is macOS behaviour, not a fault in WaveFlow.
+> **After a rebuild, remove and re-add two of them.** A plain build is signed "ad-hoc", and macOS
+> ties Accessibility and Input Monitoring to that one exact build. After a rebuild, WaveFlow can
+> still show as **on** in the list while the new build is refused. Switching it off and on does
+> not help. Select WaveFlow, press **−**, then add `/Applications/WaveFlow.app` again with **+**.
+
+**Stop this for good (free, once).** Sign your builds with your own certificate, so macOS sees
+every rebuild as the same app:
+
+1. Open **Keychain Access** → menu **Keychain Access → Certificate Assistant → Create a
+   Certificate…**
+2. Name: `WaveFlow Local Signing`. Identity Type: **Self Signed Root**. Certificate Type:
+   **Code Signing**. Press **Create**.
+3. Build again with `venv/bin/python app/build.py --install`. It finds the certificate by that name
+   and prints `signed with 'WaveFlow Local Signing'`.
+4. Remove and re-add WaveFlow in both lists **one last time**. Later rebuilds keep the permissions.
+
+A certificate with another name works too: set `WAVEFLOW_SIGN_IDENTITY` to its name.
 
 ### Or have an AI install it
 

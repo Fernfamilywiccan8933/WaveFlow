@@ -34,7 +34,7 @@ from PySide6.QtWidgets import (QDialog, QDoubleSpinBox, QFrame, QGridLayout, QHB
 import setup_logic as S
 from panels import MicPanel, SkinPicker, UninstallPanel, lbl
 from wizard import QSS as WIZARD_QSS
-from wizard import _to_qt
+from wizard import _from_qt, _to_qt
 from wizard_ui import (BAD, MINT, Card, NavItem, Segmented, TitleBar, Toggle, fit_to_screen,
                        round_window_corners)
 
@@ -602,10 +602,10 @@ class SettingsWindow(QDialog):
         if self.c.option == "local":
             eng.update({"mode": "local", "engine": self.c.engine, "auto_threads": self.auto.isChecked(),
                         "threads": S.clamp_threads(self.thr.value()),
-                        "device": "dml" if self.c.engine == "onnx-gpu" else "cpu"})
+                        # the GPU device is per-OS: DirectML does not exist on a Mac
+                        "device": ("coreml" if S.IS_MAC else "dml") if self.c.engine == "onnx-gpu" else "cpu"})
             out["engine"] = eng
-        seq = self.hk.keySequence().toString()
-        out["hotkey_show"] = seq.replace("Meta", "windows").lower().replace(" ", "") or "ctrl+alt+w"
+        out["hotkey_show"] = _from_qt(self.hk.keySequence().toString())
         out["device_name"] = self.mic.device_name()
         out["mic_sensitivity"] = self.mic.sensitivity()
         out["live_mode"] = self.mode.index() == 0
@@ -620,6 +620,14 @@ class SettingsWindow(QDialog):
         return out
 
     def _save(self):
+        # Refuse a hotkey this OS cannot register BEFORE saving it, instead of letting the app
+        # start with a dead hotkey and a misleading reason in the log.
+        import osbridge
+        hk = _from_qt(self.hk.keySequence().toString())
+        if not osbridge.hotkey_supported(hk):
+            QMessageBox.warning(self, "Hotkey", f"'{hk}' can't be used as a hotkey here. "
+                                "Pick a letter, number, F-key or Space with modifiers.")
+            return
         self.result_cfg = self.collect()
         try:
             if self.autostart.isChecked() != S.autostart_enabled():

@@ -253,10 +253,38 @@ def caret_rect():
 
 
 # ---------------------------------------------------------------- hotkeys
+# Every key the Settings/wizard hotkey recorder can save, by the name it saves (Qt's portable
+# key name, lower-cased), as a Carbon kVK_ code. The old table had 9 keys plus a per-character
+# lookup that built key events and read their text back — which macOS leaves EMPTY for a synthetic
+# event, so every other letter came back None. `windows+ctrl+m`, `ctrl+alt+d`, `ctrl+alt+1` and
+# `f5` were all refused before macOS was even asked, and logged as a permission refusal
+# (Mac, 2026-09-16).
+#
+# These are key POSITIONS on the ANSI (US) layout, which is how macOS itself identifies keys. On a
+# non-US layout a letter hotkey means the key in that US position.
+HOTKEY_KEYS = {
+    **{c: k for c, k in zip("asdfhgzxcv", range(0x00, 0x0A))},
+    "b": 0x0B, "q": 0x0C, "w": 0x0D, "e": 0x0E, "r": 0x0F, "y": 0x10, "t": 0x11,
+    "1": 0x12, "2": 0x13, "3": 0x14, "4": 0x15, "6": 0x16, "5": 0x17, "=": 0x18, "9": 0x19,
+    "7": 0x1A, "-": 0x1B, "8": 0x1C, "0": 0x1D, "]": 0x1E, "o": 0x1F, "u": 0x20, "[": 0x21,
+    "i": 0x22, "p": 0x23, "l": 0x25, "j": 0x26, "'": 0x27, "k": 0x28, ";": 0x29, "\\": 0x2A,
+    ",": 0x2B, "/": 0x2C, "n": 0x2D, "m": 0x2E, ".": 0x2F, "`": 0x32,
+    "return": 0x24, "enter": 0x24, "tab": 0x30, "space": 0x31,
+    "backspace": 0x33, "escape": 0x35, "esc": 0x35,
+    "del": 0x75, "delete": 0x75, "ins": 0x72, "insert": 0x72, "help": 0x72,
+    "home": 0x73, "end": 0x77, "pgup": 0x74, "pageup": 0x74, "pgdown": 0x79, "pgdn": 0x79,
+    "pagedown": 0x79, "left": 0x7B, "right": 0x7C, "down": 0x7D, "up": 0x7E,
+    "f1": 0x7A, "f2": 0x78, "f3": 0x63, "f4": 0x76, "f5": 0x60, "f6": 0x61, "f7": 0x62,
+    "f8": 0x64, "f9": 0x65, "f10": 0x6D, "f11": 0x67, "f12": 0x6F, "f13": 0x69, "f14": 0x6B,
+    "f15": 0x71, "f16": 0x6A, "f17": 0x40, "f18": 0x4F, "f19": 0x50, "f20": 0x5A,
+}
+
+
 def _parse_combo(combo: str):
-    """"ctrl+alt+space" -> (flags, keycode), or None if this layout-independent table has no
-    key for it. Unknown single letters map through VK when we know them and are refused when we
-    do not, because a wrong keycode would claim the WRONG key system-wide."""
+    """"ctrl+alt+space" -> (flags, keycode), or None when the key is not one a hotkey can use.
+
+    A key missing from HOTKEY_KEYS is refused, never guessed: a wrong keycode would claim the
+    WRONG key system-wide."""
     parts = [p.strip().lower() for p in (combo or "").split("+") if p.strip()]
     if not parts:
         return None
@@ -264,43 +292,17 @@ def _parse_combo(combo: str):
     for p in parts:
         if p in MOD:
             flags |= MOD[p]
-        else:
+        elif key is None:
             key = p
-    if key is None:
+        else:
+            return None          # two non-modifier keys is not a chord
+    if key is None or key not in HOTKEY_KEYS:
         return None
-    if key in VK:
-        return flags, VK[key]
-    if len(key) == 1:
-        # Ask the current keyboard layout where this character lives, so the hotkey means the
-        # letter the user typed rather than a US-layout position.
-        code = _keycode_for_char(key)
-        if code is not None:
-            return flags, code
-    return None
+    return flags, HOTKEY_KEYS[key]
 
 
-def _keycode_for_char(ch: str):
-    try:
-        import Quartz
-        src = Quartz.TISCopyCurrentKeyboardLayoutInputSource()
-        data = Quartz.TISGetInputSourceProperty(src, Quartz.kTISPropertyUnicodeKeyLayoutData)
-        if data is None:
-            return None
-    except Exception:
-        return None
-    # Walking a UCKeyboardLayout from Python is fragile; ask each keycode what it produces.
-    try:
-        import Quartz as Q
-        for code in range(0, 128):
-            ev = Q.CGEventCreateKeyboardEvent(None, code, True)
-            if ev is None:
-                continue
-            got = Q.CGEventKeyboardGetUnicodeString(ev, 4, None, None)
-            if got and len(got) >= 2 and got[1] and got[1].lower() == ch:
-                return code
-    except Exception:
-        return None
-    return None
+def hotkey_supported(combo: str) -> bool:
+    return _parse_combo(combo) is not None
 
 
 def register_hotkey(hotkey_id: int, combo: str) -> bool:
@@ -609,6 +611,8 @@ def open_permission_settings(name: str) -> bool:
 
 def permission_note() -> str:
     """Said plainly, because the alternative is the app looking broken after every update."""
-    return ("macOS ties these permissions to the exact app file. WaveFlow is not signed by a paid "
-            "Apple developer account, so macOS forgets them whenever the app is updated. "
-            "Tick them again after an update.")
+    # "Tick them again" was wrong advice: after a rebuild the old entry still shows ON but belongs
+    # to the previous build, and switching it changes nothing (Mac, 2026-09-16).
+    return ("macOS ties these permissions to the exact app build. After an update, if WaveFlow "
+            "shows as allowed but still can't type or hear the hotkey, select it in the list, "
+            "remove it with the − button, and add it again.")

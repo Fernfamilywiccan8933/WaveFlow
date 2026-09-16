@@ -582,6 +582,42 @@ def meter_pos(level: float, floor: float) -> float:
     return min(1.0, math.log(level / floor) / math.log(METER_SPAN))
 
 
+# ---------------------------------------------------------------- hotkey <-> Qt key sequence
+# Qt on macOS names ⌘ Command "Ctrl" and ⌃ Control "Meta" (so Ctrl+C means Copy everywhere).
+# The recorder used to save Qt's text as-is, with Meta renamed "windows" — so pressing ⌃⌥W saved
+# "windows+alt+w", which the Mac tap reads as ⌘⌥W, and loading turned a correct "ctrl+alt+w" into
+# ⌥⌘W on screen. It looked like the hotkey never saved (Mac, 2026-09-16). One converter, used on
+# save AND load, by the wizard AND Settings, is the only way the two stay inverses.
+_QT_TO_HK_MAC = {"ctrl": "cmd", "meta": "ctrl", "alt": "alt", "shift": "shift"}
+_QT_TO_HK_WIN = {"ctrl": "ctrl", "meta": "windows", "alt": "alt", "shift": "shift"}
+_HK_TO_QT_MAC = {"cmd": "Ctrl", "command": "Ctrl", "win": "Ctrl", "windows": "Ctrl", "meta": "Ctrl",
+                 "ctrl": "Meta", "control": "Meta", "alt": "Alt", "option": "Alt", "shift": "Shift"}
+_HK_TO_QT_WIN = {"ctrl": "Ctrl", "control": "Ctrl", "win": "Meta", "windows": "Meta", "meta": "Meta",
+                 "cmd": "Meta", "command": "Meta", "alt": "Alt", "option": "Alt", "shift": "Shift"}
+
+
+def qt_to_hotkey(seq: str, mac: bool | None = None) -> str:
+    """QKeySequence.toString() (portable text) -> config string, e.g. 'Meta+Alt+W' -> 'ctrl+alt+w'
+    on a Mac. Only the first chord counts; "" when nothing was recorded."""
+    mac = IS_MAC if mac is None else mac
+    table = _QT_TO_HK_MAC if mac else _QT_TO_HK_WIN
+    first = (seq or "").split(", ")[0].strip()
+    if not first:
+        return ""
+    parts = first.split("+")
+    if first.endswith("++"):                       # the "+" key itself
+        parts = first[:-2].split("+") + ["+"]
+    return "+".join(table.get(p.lower(), p.lower().replace(" ", "")) for p in parts if p)
+
+
+def hotkey_to_qt(kb: str, mac: bool | None = None) -> str:
+    """Config string -> text for QKeySequence(...). The exact inverse of qt_to_hotkey."""
+    mac = IS_MAC if mac is None else mac
+    table = _HK_TO_QT_MAC if mac else _HK_TO_QT_WIN
+    return "+".join(table.get(p, p.capitalize() if len(p) > 1 else p.upper())
+                    for p in (kb or "").lower().replace(" ", "").split("+") if p)
+
+
 # ---------------------------------------------------------------- start with Windows
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 RUN_NAME = "WaveFlow"

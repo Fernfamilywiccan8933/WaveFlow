@@ -79,6 +79,11 @@ def register_hotkey(hotkey_id: int, combo: str) -> bool:
     return bool(ctypes.windll.user32.RegisterHotKey(None, hotkey_id, mods | 0x4000, vk))
 
 
+def hotkey_supported(combo: str) -> bool:
+    import waveflow
+    return waveflow.parse_combo(combo) is not None
+
+
 def unregister_hotkey(hotkey_id: int) -> None:
     try:
         ctypes.windll.user32.UnregisterHotKey(None, hotkey_id)
