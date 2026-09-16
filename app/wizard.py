@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (QCheckBox, QDialog, QFrame, QGridLayout, QHBoxLay
 
 import remote_install as RI
 import setup_logic as S
-from panels import MicPanel, SkinPicker
+from panels import MicPanel, PermissionPanel, SkinPicker
 from wizard_ui import (BAD, BLUSH, MINT, SKY, VIO, WARN, Card, CheckRow, Segmented,
                        StepItem, TitleBar, families, fit_to_screen,
                        round_window_corners)
@@ -935,24 +935,15 @@ class SetupWizard(QDialog):
         # macOS refuses both until they are granted, and refuses them SILENTLY — the app simply
         # does nothing. Putting this next to the hotkey field is deliberate: that is the control
         # that stops working without Input Monitoring.
+        # Allow buttons make macOS itself ask; rows turn green on their own (panels.PermissionPanel).
         self.perm_box = QWidget()
         pv = QVBoxLayout(self.perm_box)
         pv.setContentsMargins(0, 14, 0, 0)
-        pv.setSpacing(6)
-        pv.addWidget(_lbl("Permissions macOS needs", "lbl"))
-        self.perm_rows = QVBoxLayout()
-        self.perm_rows.setSpacing(6)
-        pv.addLayout(self.perm_rows)
-        recheck = QPushButton("Re-check")
-        recheck.setObjectName("pill")
-        recheck.clicked.connect(self._refresh_permissions)
-        pv.addWidget(recheck, 0, Qt.AlignLeft)
-        self.perm_note = _lbl("", "hint")
-        pv.addWidget(self.perm_note)
+        if S.IS_MAC:
+            self.perms = PermissionPanel()
+            pv.addWidget(self.perms)
         right.addWidget(self.perm_box)
         self.perm_box.setVisible(S.IS_MAC)
-        if S.IS_MAC:
-            self._refresh_permissions()
         right.addStretch(1)
         two.addLayout(left, 1)
         two.addLayout(right, 1)
@@ -960,63 +951,9 @@ class SetupWizard(QDialog):
         self._foot(v, primary="Finish", on_primary=self._finish)
         return page
 
-    def _refresh_permissions(self):
-        """Redraw the macOS permission rows from what the OS says RIGHT NOW.
-
-        It asks without prompting, on purpose: the prompting form of the check pops a system
-        dialog, and a screen that nags every time it repaints would be intolerable. The user
-        gets the dialog when they press Open Settings, which is when they asked for it.
-        """
-        import osbridge
-        while self.perm_rows.count():
-            it = self.perm_rows.takeAt(0)
-            if it.widget():
-                it.widget().deleteLater()
-        missing = dict(osbridge.missing_permissions())
-        for name, why in (("Accessibility", "to type the words into the app you are using"),
-                          ("Input Monitoring", "to notice your hotkey while another app is in front")):
-            r = QHBoxLayout()
-            granted = name not in missing
-            tick = _lbl(("✓  " if granted else "•  ") + name, "rowt", wrap=False)
-            tick.setStyleSheet(f"color:{MINT if granted else WARN};")
-            col = QVBoxLayout()
-            col.setSpacing(1)
-            col.addWidget(tick)
-            col.addWidget(_lbl(why, "hint"))
-            r.addLayout(col, 1)
-            if not granted:
-                b = QPushButton("Open Settings")
-                b.setObjectName("pill")
-                b.clicked.connect(lambda _=False, n=name: osbridge.open_permission_settings(n))
-                r.addWidget(b)
-            w = QWidget()
-            w.setLayout(r)
-            self.perm_rows.addWidget(w)
-        # Running from source, macOS attributes permissions to the HOST BINARY — the Python
-        # interpreter, launched by Terminal — never to "WaveFlow", because as far as the OS is
-        # concerned WaveFlow is a script that python happens to be running. So the Privacy list
-        # shows "Terminal" or "Python" and the user quite reasonably concludes the wrong app is
-        # asking. Reported from a real Mac, 2026-09-15. Building the .app is the only real fix,
-        # so say that here instead of letting them hunt for an entry that cannot exist yet.
-        import sys as _sys
-        self.perm_note.setTextFormat(Qt.RichText)
-        if not getattr(_sys, "frozen", False):
-            self.perm_note.setText(
-                "Running from source, so macOS asks on behalf of <b>Python</b> or "
-                "<b>Terminal</b> — tick those, not &ldquo;WaveFlow&rdquo;. WaveFlow is not an app "
-                "to macOS until you build one:<br>"
-                "<code>venv/bin/python app/build.py</code><br>"
-                "After that the permissions are named WaveFlow and stay with it.")
-        else:
-            self.perm_note.setText(osbridge.permission_note() if missing else
-                                   "All set. macOS forgets these whenever the app file changes, "
-                                   "so re-check after an update.")
-
     def _start_mic(self):
         if self.step == 4:
             self.mic.start()
-            if S.IS_MAC:
-                self._refresh_permissions()
 
     def _stop_mic(self):
         if getattr(self, "mic", None) is not None:

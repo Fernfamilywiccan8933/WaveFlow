@@ -120,25 +120,20 @@ not.
 | Accessibility | to type the words into the app you are using |
 | Input Monitoring | to notice your hotkey while another app is in front |
 
-The wizard's last page lists all three with a button to each settings page.
+The wizard's last page, and **Settings → Hotkey & look**, show all three live. Press **Allow** and
+macOS asks by itself. WaveFlow is then already in the list, so you only switch it on. The row turns
+green on its own, and the hotkey starts working without a restart.
 
-> **After a rebuild, remove and re-add two of them.** A plain build is signed "ad-hoc", and macOS
-> ties Accessibility and Input Monitoring to that one exact build. After a rebuild, WaveFlow can
-> still show as **on** in the list while the new build is refused. Switching it off and on does
-> not help. Select WaveFlow, press **−**, then add `/Applications/WaveFlow.app` again with **+**.
+No app can switch these on for you. macOS requires your own click, on purpose.
 
-**Stop this for good (free, once).** Sign your builds with your own certificate, so macOS sees
-every rebuild as the same app:
+**Signing is automatic.** The first `app/build.py` on a Mac creates a free, local
+`WaveFlow Local Signing` certificate in your login keychain, and every build after that uses it.
+macOS then sees each rebuild as the same app, so the permissions stay. macOS may ask once whether
+`codesign` may use the key: choose **Always Allow**. To use a certificate of your own instead, set
+`WAVEFLOW_SIGN_IDENTITY` to its name.
 
-1. Open **Keychain Access** → menu **Keychain Access → Certificate Assistant → Create a
-   Certificate…**
-2. Name: `WaveFlow Local Signing`. Identity Type: **Self Signed Root**. Certificate Type:
-   **Code Signing**. Press **Create**.
-3. Build again with `venv/bin/python app/build.py --install`. It finds the certificate by that name
-   and prints `signed with 'WaveFlow Local Signing'`.
-4. Remove and re-add WaveFlow in both lists **one last time**. Later rebuilds keep the permissions.
-
-A certificate with another name works too: set `WAVEFLOW_SIGN_IDENTITY` to its name.
+**Allowed but still not working?** That is an old entry from an earlier build. Press **Reset and
+ask again** in the panel. It removes only WaveFlow's own entries, then macOS asks again.
 
 ### Or have an AI install it
 

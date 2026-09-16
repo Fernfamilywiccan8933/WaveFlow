@@ -125,6 +125,18 @@ def open_permission_settings(name: str) -> bool:
     return False
 
 
+def request_permission(name: str) -> bool:
+    return False
+
+
+def retry_hotkeys() -> bool:
+    return False
+
+
+def reset_permissions() -> bool:
+    return False
+
+
 def permission_note() -> str:
     return ("Typing into other apps is not implemented on this system. WaveFlow will still "
             "transcribe; it cannot put the words in for you.")

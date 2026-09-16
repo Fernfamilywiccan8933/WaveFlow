@@ -216,6 +216,24 @@ def open_permission_settings(name: str) -> bool:
     return _impl.open_permission_settings(name)
 
 
+def request_permission(name: str) -> bool:
+    """Make the OS itself ask for one permission ("Microphone", "Accessibility", "Input
+    Monitoring"). The OS still needs the user's own click — no app may grant these. Returns True if
+    the request was made; poll missing_permissions() to see it granted."""
+    return _impl.request_permission(name)
+
+
+def retry_hotkeys() -> bool:
+    """Arm hotkeys that failed for lack of permission, now that it may have been granted."""
+    return _impl.retry_hotkeys()
+
+
+def reset_permissions() -> bool:
+    """macOS: clear WaveFlow's own stale Accessibility / Input Monitoring entries so the OS asks
+    again. Only for the built app, never Python's entries. False elsewhere."""
+    return _impl.reset_permissions()
+
+
 def permission_note() -> str:
     """One honest sentence about permissions, or "" when there is nothing to say."""
     return _impl.permission_note()

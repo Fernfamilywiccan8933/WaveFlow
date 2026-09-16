@@ -32,7 +32,7 @@ from PySide6.QtWidgets import (QDialog, QDoubleSpinBox, QFrame, QGridLayout, QHB
                                QWidget)
 
 import setup_logic as S
-from panels import MicPanel, SkinPicker, UninstallPanel, lbl
+from panels import MicPanel, PermissionPanel, SkinPicker, UninstallPanel, lbl
 from wizard import QSS as WIZARD_QSS
 from wizard import _from_qt, _to_qt
 from wizard_ui import (BAD, MINT, Card, NavItem, Segmented, TitleBar, Toggle, fit_to_screen,
@@ -531,11 +531,20 @@ class SettingsWindow(QDialog):
             self.pill_theme.set(0)
         row(v, "Pill appearance", "the glass takes the colour of what is behind it",
             self.pill_theme)
-        v.addWidget(lbl("System follows your Windows light/dark setting. If your wallpaper is "
-                        "light but your theme is dark, pick Light here.", "hint"))
+        v.addWidget(lbl(f"System follows your {'macOS' if S.IS_MAC else 'Windows'} light/dark "
+                        "setting. If your wallpaper is light but your theme is dark, pick Light "
+                        "here.", "hint"))
         v.addStretch(1)
         g.addWidget(f, 0, 1)
-        g.setRowStretch(1, 1)
+        if S.IS_MAC:
+            # The same live panel as setup: permissions can be revoked or go stale after setup.
+            f, v = card("Permissions")
+            self.perms = PermissionPanel()
+            v.addWidget(self.perms)
+            g.addWidget(f, 1, 0, 1, 2)
+            g.setRowStretch(2, 1)
+        else:
+            g.setRowStretch(1, 1)
         return page
 
     # ------------------------------------------------------------ advanced

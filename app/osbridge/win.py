@@ -196,6 +196,18 @@ def open_permission_settings(name: str) -> bool:
     return False
 
 
+def request_permission(name: str) -> bool:
+    return False         # nothing to ask for
+
+
+def retry_hotkeys() -> bool:
+    return True          # RegisterHotKey never waits on a permission
+
+
+def reset_permissions() -> bool:
+    return False
+
+
 def permission_note() -> str:
     return ""
 

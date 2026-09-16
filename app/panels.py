@@ -154,6 +154,143 @@ class MicPanel(QWidget):
         self.meter.set_level(0)
 
 
+PERMISSIONS = (("Microphone", "to hear you"),
+               ("Accessibility", "to type the words into the app you are using"),
+               ("Input Monitoring", "to notice your hotkey while another app is in front"))
+
+
+class PermissionPanel(QWidget):
+    """macOS permissions, live: one row each with an Allow button that makes macOS ITSELF ask.
+
+    Operator requirement, 2026-09-16: setup asks for each permission, instead of sending the user
+    to find WaveFlow in System Settings. No app can switch these on — macOS requires the user's
+    own click in its own UI — so Allow raises the system prompt (which also puts WaveFlow in the
+    list already), and the row turns green by itself when the grant lands: polled every second
+    while the panel is on screen, redrawn only when something changed.
+
+    Reset and ask again handles the stale grant after an update: WaveFlow shows as ON in the list,
+    but the entry belongs to an older build. It clears only WaveFlow's own entries, after asking.
+    """
+
+    changed = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        import osbridge
+        self._os = osbridge
+        self._state = None
+        self._asked = set()
+        v = QVBoxLayout(self)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(6)
+        v.addWidget(lbl("Permissions macOS needs", "lbl"))
+        self.rows = QVBoxLayout()
+        self.rows.setSpacing(6)
+        v.addLayout(self.rows)
+        self.reset_btn = QPushButton("Allowed but still not working? Reset and ask again")
+        self.reset_btn.setObjectName("pill")
+        self.reset_btn.clicked.connect(self._reset)
+        v.addWidget(self.reset_btn, 0, Qt.AlignLeft)
+        self.note = lbl("", "hint")
+        self.note.setTextFormat(Qt.RichText)
+        v.addWidget(self.note)
+        self._timer = QTimer(self)
+        self._timer.setInterval(1000)
+        self._timer.timeout.connect(self.refresh)
+        self.refresh(force=True)
+
+    def missing(self) -> set[str]:
+        try:
+            return {n for n, _ in self._os.missing_permissions()}
+        except Exception:
+            return set()
+
+    def all_granted(self) -> bool:
+        return not self.missing()
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        self.refresh(force=True)
+        self._timer.start()
+
+    def hideEvent(self, e):
+        self._timer.stop()
+        super().hideEvent(e)
+
+    def refresh(self, force: bool = False):
+        missing = self.missing()
+        state = frozenset(missing)
+        if state == self._state and not force:
+            return
+        before, self._state = self._state, state
+        if before is not None and "Input Monitoring" in before and "Input Monitoring" not in missing:
+            self._os.retry_hotkeys()            # the hotkey works now, not after a relaunch
+        while self.rows.count():
+            w = self.rows.takeAt(0).widget()
+            if w is not None:
+                w.hide()                     # gone NOW, not at the next event-loop turn
+                w.setParent(None)
+                w.deleteLater()
+        from wizard_ui import MINT, WARN
+        for name, why in PERMISSIONS:
+            granted = name not in missing
+            r = QHBoxLayout()
+            col = QVBoxLayout()
+            col.setSpacing(1)
+            tick = lbl(("✓  " if granted else "•  ") + name, "rowt", wrap=False)
+            tick.setStyleSheet(f"color:{MINT if granted else WARN};")
+            col.addWidget(tick)
+            col.addWidget(lbl(why, "hint"))
+            r.addLayout(col, 1)
+            if not granted:
+                b = QPushButton("Allow")
+                b.setObjectName("pill")
+                b.clicked.connect(lambda _=False, n=name: self._allow(n))
+                r.addWidget(b)
+            w = QWidget()
+            w.setLayout(r)
+            self.rows.addWidget(w)
+        import sys as _sys
+        frozen = bool(getattr(_sys, "frozen", False))
+        stale_possible = frozen and bool(missing & {"Accessibility", "Input Monitoring"})
+        self.reset_btn.setVisible(stale_possible and bool(self._asked))
+        if not frozen:
+            # From source macOS attributes the permissions to Python / Terminal, never WaveFlow.
+            self.note.setText("Running from source, so macOS asks on behalf of <b>Python</b> or "
+                              "<b>Terminal</b>. Build the app to get WaveFlow's own entries:<br>"
+                              "<code>venv/bin/python app/build.py --install</code>")
+        elif missing:
+            self.note.setText(html.escape(self._os.permission_note()))
+        else:
+            self.note.setText("All set.")
+        if before is not None and state != before:
+            self.changed.emit()
+
+    def _allow(self, name: str):
+        self._asked.add(name)
+        if name == "Microphone" and self._os.microphone_status() == "denied":
+            # Refused once: macOS will not prompt again, only its Settings page can change it.
+            self._os.open_permission_settings(name)
+        elif not self._os.request_permission(name):
+            self._os.open_permission_settings(name)
+        self.refresh(force=True)
+
+    def _reset(self):
+        if QMessageBox.question(
+                self, "Reset permissions",
+                "This removes WaveFlow's own Accessibility and Input Monitoring entries, so macOS "
+                "can ask again for this version. Nothing else is changed.") != QMessageBox.Yes:
+            return
+        if not self._os.reset_permissions():
+            QMessageBox.warning(self, "Reset permissions",
+                                "macOS did not allow the reset. Open System Settings → Privacy & "
+                                "Security, remove WaveFlow from both lists with −, then press Allow.")
+            return
+        for name in ("Accessibility", "Input Monitoring"):
+            self._os.request_permission(name)
+        self.refresh(force=True)
+
+
 class SkinPicker(QWidget):
     changed = Signal(str)
 

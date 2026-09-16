@@ -241,17 +241,90 @@ def _sign_identity() -> str:
     want = os.environ.get("WAVEFLOW_SIGN_IDENTITY", "").strip()
     if want:
         return want
+    return SIGN_NAME if _have_identity(SIGN_NAME) else "-"
+
+
+def _have_identity(name: str) -> bool:
     try:
         out = subprocess.run(["security", "find-identity", "-p", "codesigning"],
                              capture_output=True, text=True, timeout=30).stdout
     except Exception:
-        return "-"
-    return SIGN_NAME if f'"{SIGN_NAME}"' in out else "-"
+        return False
+    return f'"{name}"' in (out or "")
+
+
+# Code signing only: digitalSignature + the codeSigning extended key usage. Without the EKU,
+# codesign refuses the certificate.
+_CERT_CONFIG = """[req]
+distinguished_name = dn
+prompt = no
+x509_extensions = ext
+[dn]
+CN = {name}
+[ext]
+basicConstraints = critical,CA:false
+keyUsage = critical,digitalSignature
+extendedKeyUsage = critical,codeSigning
+"""
+
+
+def _create_identity(name: str = SIGN_NAME) -> bool:
+    """Make a self-signed code-signing certificate and put it in the login keychain. Once.
+
+    The operator's requirement (2026-09-16): signing sets itself up during install — no Keychain
+    Access steps. Everything used here ships with macOS: `openssl` makes the key and certificate,
+    `security` imports them.
+
+    * The private key exists on disk only inside a private temp folder, for the seconds between
+      `openssl` and `security import`, and the folder is deleted whatever happens.
+    * `-T /usr/bin/codesign` lets codesign use the key. macOS may still show ONE keychain dialog on
+      the first signing; "Always Allow" ends it.
+    * The .p12 is written with SHA1/3DES on purpose: `security import` cannot read the AES
+      default of newer openssl builds, and the file lives for seconds under a throwaway password.
+    * 10 years, so it never expires under a working install.
+    """
+    import secrets
+    import shutil
+    import tempfile
+
+    if not shutil.which("openssl") or not shutil.which("security"):
+        return False
+    tmp = Path(tempfile.mkdtemp(prefix="wf-sign-"))
+    try:
+        os.chmod(tmp, 0o700)
+        cfg, key, crt, p12 = tmp / "c.cnf", tmp / "k.pem", tmp / "c.pem", tmp / "i.p12"
+        cfg.write_text(_CERT_CONFIG.format(name=name))
+        pw = secrets.token_hex(16)
+        steps = [
+            ["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "3650",
+             "-config", str(cfg), "-keyout", str(key), "-out", str(crt)],
+            ["openssl", "pkcs12", "-export", "-inkey", str(key), "-in", str(crt), "-out", str(p12),
+             "-name", name, "-passout", f"pass:{pw}",
+             "-keypbe", "PBE-SHA1-3DES", "-certpbe", "PBE-SHA1-3DES", "-macalg", "sha1"],
+            ["security", "import", str(p12), "-P", pw, "-T", "/usr/bin/codesign"],
+        ]
+        for cmd in steps:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+            if r.returncode != 0:
+                print(f"could not create a signing certificate ({cmd[0]} {cmd[1]}): "
+                      f"{(r.stderr or r.stdout).strip()[-200:]}")
+                return False
+        return _have_identity(name)
+    except Exception as e:
+        print(f"could not create a signing certificate: {e}")
+        return False
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 def _mac_after(app: Path) -> None:
     """Sign, then say the one thing that would otherwise look like a bug."""
     ident = _sign_identity()
+    if ident == "-" and not os.environ.get("WAVEFLOW_SIGN_IDENTITY"):
+        print(f"No '{SIGN_NAME}' certificate yet — creating one (once, in your login keychain).")
+        if _create_identity():
+            ident = SIGN_NAME
+            print("created. macOS may ask once whether codesign may use it: choose Always Allow.")
     try:
         # No --identifier: with --deep it would stamp every nested library too. The bundle's own
         # identifier comes from CFBundleIdentifier (--osx-bundle-identifier above).
@@ -272,7 +345,7 @@ def _mac_after(app: Path) -> None:
         print("  3. WARNING: ad-hoc signed. After EVERY rebuild, REMOVE WaveFlow from Accessibility")
         print("     and Input Monitoring (the − button) and add it again. Switching the old entry")
         print("     on is not enough: it belongs to the previous build.")
-        print(f"     To stop this, create a free certificate once — see README, '{SIGN_NAME}'.")
+        print(f"     The automatic '{SIGN_NAME}' certificate could not be made — see the message above.")
 
 
 if __name__ == "__main__":

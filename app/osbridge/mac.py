@@ -578,6 +578,13 @@ def _has_input_monitoring() -> bool:
     Q = _quartz()
     if not Q:
         return False
+    # macOS 10.15+ has the real predicate. Cheap enough to poll every second from the wizard.
+    pre = getattr(Q, "CGPreflightListenEventAccess", None)
+    if pre is not None:
+        try:
+            return bool(pre())
+        except Exception:
+            pass
     try:
         tap = Q.CGEventTapCreate(Q.kCGSessionEventTap, Q.kCGHeadInsertEventTap,
                                  Q.kCGEventTapOptionListenOnly,
@@ -609,10 +616,82 @@ def open_permission_settings(name: str) -> bool:
         return False
 
 
+def request_permission(name: str) -> bool:
+    """Make macOS ITSELF ask for one permission. Returns True if the request was made.
+
+    No app can switch these on for the user — Apple requires the user's own click in the system's
+    own UI, on purpose. What this does is the most an app may: raise the system prompt, which also
+    PUTS WaveFlow in the Privacy list already, so the user flips one switch instead of hunting for
+    the app and adding it with +. The caller polls missing_permissions() to see the grant land.
+    """
+    if name == "Microphone":
+        return request_microphone()
+    if name == "Accessibility":
+        try:
+            import ApplicationServices as AS
+            AS.AXIsProcessTrustedWithOptions({AS.kAXTrustedCheckOptionPrompt: True})
+            return True
+        except Exception:
+            return open_permission_settings(name)
+    if name == "Input Monitoring":
+        Q = _quartz()
+        req = getattr(Q, "CGRequestListenEventAccess", None) if Q else None
+        if req is not None:
+            try:
+                req()
+                return True
+            except Exception:
+                pass
+        return open_permission_settings(name)
+    return False
+
+
+def retry_hotkeys() -> bool:
+    """Arm the hotkey tap now, if it failed earlier for lack of Input Monitoring. Called once the
+    grant is seen, so the hotkey works without relaunching the app."""
+    if _TAP_STATE["tap"] is not None:
+        return True
+    if not _TAP_STATE["hotkeys"]:
+        return False
+    return _ensure_tap()
+
+
+_TCC_SERVICES = ("Accessibility", "ListenEvent")
+
+
+def reset_permissions() -> bool:
+    """Clear WaveFlow's OWN Accessibility and Input Monitoring entries, so macOS asks afresh.
+
+    For the stale grant: after an update the list shows WaveFlow switched ON, but the entry belongs
+    to an older build and the running one is refused. `tccutil reset <service> <bundle id>` removes
+    only the entries for that bundle id, needs no admin rights, and cannot grant anything.
+
+    Refused unless running as the built app. From source the bundle id is Python's, and resetting
+    it would take the permissions away from the user's Terminal or Python for everything else too.
+    """
+    import sys as _sys
+    if not getattr(_sys, "frozen", False):
+        return False
+    bid = ""
+    try:
+        bid = str(_appkit().NSBundle.mainBundle().bundleIdentifier() or "")
+    except Exception:
+        pass
+    if bid != "com.waveflow.client":
+        return False
+    ok = True
+    for svc in _TCC_SERVICES:
+        try:
+            r = subprocess.run(["tccutil", "reset", svc, bid], capture_output=True, timeout=15)
+            ok = ok and r.returncode == 0
+        except Exception:
+            ok = False
+    return ok
+
+
 def permission_note() -> str:
     """Said plainly, because the alternative is the app looking broken after every update."""
     # "Tick them again" was wrong advice: after a rebuild the old entry still shows ON but belongs
     # to the previous build, and switching it changes nothing (Mac, 2026-09-16).
-    return ("macOS ties these permissions to the exact app build. After an update, if WaveFlow "
-            "shows as allowed but still can't type or hear the hotkey, select it in the list, "
-            "remove it with the − button, and add it again.")
+    return ("Press Allow and macOS asks for itself — WaveFlow is already in the list, so just switch "
+            "it on. Allowed but still not working after an update? Use Reset and ask again.")

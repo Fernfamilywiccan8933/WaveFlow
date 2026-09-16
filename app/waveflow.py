@@ -1022,6 +1022,12 @@ class WaveFlow(QWidget):
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
         self._timer.start(33)
+        if not IS_WINDOWS:
+            # A hotkey refused for lack of Input Monitoring arms ITSELF once the user grants it —
+            # from the wizard, Settings, or System Settings directly. No relaunch.
+            self._hk_retry = QTimer(self)
+            self._hk_retry.timeout.connect(self._retry_hotkey_if_permitted)
+            self._hk_retry.start(3000)
 
         self._last_partial = ""
         self._listen_t0 = 0.0
@@ -1393,6 +1399,21 @@ class WaveFlow(QWidget):
         cb = self._hk_filter.callbacks.get(hotkey_id)
         if cb and pressed:
             cb()
+
+    def _retry_hotkey_if_permitted(self):
+        """Quiet: does nothing unless the hotkey is down AND the only thing stopping it is now
+        gone. A bad key or a still-missing permission must not re-raise the warning every 3 s."""
+        if getattr(self, "_hotkey_ok", True):
+            return
+        combo = self.cfg.get("hotkey_show", "")
+        if not combo or not osbridge.hotkey_supported(combo):
+            return
+        if "Input Monitoring" in dict(osbridge.missing_permissions()):
+            return
+        log.info("Input Monitoring granted — arming the hotkey without a relaunch")
+        self._start_hotkey()
+        if self._hotkey_ok and getattr(self, "tray", None) is not None:
+            self.tray.setToolTip("WaveFlow")
 
     def _start_hotkey(self):
         """SYSTEM-registered hotkeys via Win32 RegisterHotKey (reliable across apps,

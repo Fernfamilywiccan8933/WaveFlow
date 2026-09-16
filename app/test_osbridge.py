@@ -57,6 +57,9 @@ CONTRACT = {
     "request_microphone": ["callback"],
     "missing_permissions": [],
     "open_permission_settings": ["name"],
+    "request_permission": ["name"],
+    "retry_hotkeys": [],
+    "reset_permissions": [],
     "permission_note": [],
 }
 
@@ -335,6 +338,156 @@ for _f in ("settings.py", "wizard.py"):
     check(f"{_f} no longer hand-converts Meta", 'replace("Meta", "windows")' in _t, False)
 _st = (Path(__file__).resolve().parent / "settings.py").read_text(encoding="utf-8")
 check("settings saves coreml, not dml, for the Mac GPU", '"coreml" if S.IS_MAC else "dml"' in _st, True)
+
+# --- setup ASKS for permissions (operator requirement 2026-09-16) --------------------------------
+import types  # noqa: E402
+from unittest import mock  # noqa: E402
+
+asked = []
+fake_as = types.SimpleNamespace(kAXTrustedCheckOptionPrompt="AXTrustedCheckOptionPrompt",
+                                AXIsProcessTrustedWithOptions=lambda o: asked.append(("ax", dict(o))) or False)
+fake_q = types.SimpleNamespace(CGRequestListenEventAccess=lambda: asked.append(("listen",)) or False,
+                               CGPreflightListenEventAccess=lambda: False)
+with mock.patch.dict(sys.modules, {"ApplicationServices": fake_as}), \
+     mock.patch.object(mac, "_quartz", lambda: fake_q), \
+     mock.patch.object(mac, "open_permission_settings", lambda n: asked.append(("settings", n)) or True):
+    check("Accessibility: the system prompt, not a Settings link", mac.request_permission("Accessibility"), True)
+    check("...with the prompt option ON", asked[-1], ("ax", {"AXTrustedCheckOptionPrompt": True}))
+    check("Input Monitoring: CGRequestListenEventAccess", (mac.request_permission("Input Monitoring"), asked[-1]),
+          (True, ("listen",)))
+    check("Input Monitoring is read with the real predicate", mac._has_input_monitoring(), False)
+    check("an unknown name asks nothing", mac.request_permission("Camera"), False)
+
+ran = []
+with mock.patch.object(mac.subprocess, "run", lambda cmd, **kw: ran.append(cmd) or types.SimpleNamespace(returncode=0)):
+    fake_ak = types.SimpleNamespace(NSBundle=types.SimpleNamespace(
+        mainBundle=lambda: types.SimpleNamespace(bundleIdentifier=lambda: "com.waveflow.client")))
+    # Even when the bundle id LOOKS right: a source run must never reset (a false pass came from
+    # this check running where AppKit is absent, so the id check alone refused it).
+    with mock.patch.object(sys, "frozen", False, create=True), mock.patch.object(mac, "_appkit", lambda: fake_ak):
+        check("reset refused from source (would clear PYTHON's grants)", mac.reset_permissions(), False)
+    fake_ak = types.SimpleNamespace(NSBundle=types.SimpleNamespace(
+        mainBundle=lambda: types.SimpleNamespace(bundleIdentifier=lambda: "org.python.python")))
+    with mock.patch.object(sys, "frozen", True, create=True), mock.patch.object(mac, "_appkit", lambda: fake_ak):
+        check("reset refused for any other bundle id", mac.reset_permissions(), False)
+    fake_ak.NSBundle.mainBundle = lambda: types.SimpleNamespace(bundleIdentifier=lambda: "com.waveflow.client")
+    with mock.patch.object(sys, "frozen", True, create=True), mock.patch.object(mac, "_appkit", lambda: fake_ak):
+        check("reset in the built app", mac.reset_permissions(), True)
+check("reset touches ONLY WaveFlow's two entries", ran,
+      [["tccutil", "reset", "Accessibility", "com.waveflow.client"],
+       ["tccutil", "reset", "ListenEvent", "com.waveflow.client"]])
+
+from PySide6.QtWidgets import QApplication, QMessageBox  # noqa: E402
+
+_qapp = QApplication.instance() or QApplication([])
+import panels  # noqa: E402
+
+
+class _FakeOS:
+    def __init__(self):
+        self.missing = {"Microphone", "Accessibility", "Input Monitoring"}
+        self.log = []
+        self.mic = "undetermined"
+
+    def missing_permissions(self):
+        return [(n, "") for n in sorted(self.missing)]
+
+    def microphone_status(self):
+        return self.mic
+
+    def request_permission(self, n):
+        self.log.append(("request", n))
+        return True
+
+    def open_permission_settings(self, n):
+        self.log.append(("settings", n))
+        return True
+
+    def retry_hotkeys(self):
+        self.log.append(("retry",))
+        return True
+
+    def reset_permissions(self):
+        self.log.append(("reset",))
+        return True
+
+    def permission_note(self):
+        return "note"
+
+
+fos = _FakeOS()
+with mock.patch.dict(sys.modules, {"osbridge": fos}), mock.patch.object(sys, "frozen", True, create=True):
+    pp = panels.PermissionPanel()
+
+
+def _buttons(p):
+    from PySide6.QtWidgets import QPushButton
+    return [b for b in p.findChildren(QPushButton) if b.text() == "Allow" and not b.parent() is None]
+
+
+with mock.patch.object(sys, "frozen", True, create=True):
+    check("three rows, one Allow each while all are missing", len([b for b in _buttons(pp)]), 3)
+    check("no Open Settings button any more",
+          any(b.text() == "Open Settings" for b in pp.findChildren(panels.QPushButton)), False)
+    check("reset hidden until the user has asked once", pp.reset_btn.isVisibleTo(pp), False)
+    pp._allow("Accessibility")
+    check("Allow makes macOS ask", fos.log[-1], ("request", "Accessibility"))
+    check("reset offered once asked and still missing", pp.reset_btn.isVisibleTo(pp), True)
+    fos.mic = "denied"
+    pp._allow("Microphone")
+    check("a denied mic cannot be re-prompted: its Settings page opens", fos.log[-1], ("settings", "Microphone"))
+    # the grant lands while the panel is open
+    fos.missing.discard("Input Monitoring")
+    fos.log.clear()
+    pp.refresh()
+    check("Input Monitoring granted -> hotkey armed at once", ("retry",) in fos.log, True)
+    fos.log.clear()
+    pp.refresh()
+    check("no change -> nothing redone", fos.log, [])
+    with mock.patch.object(panels.QMessageBox, "question", lambda *a, **k: QMessageBox.No):
+        pp._reset()
+    check("reset needs a yes", ("reset",) in fos.log, False)
+    with mock.patch.object(panels.QMessageBox, "question", lambda *a, **k: QMessageBox.Yes):
+        pp._reset()
+    check("reset, then ask for both again", fos.log[-3:],
+          [("reset",), ("request", "Accessibility"), ("request", "Input Monitoring")])
+    fos.missing.clear()
+    pp.refresh()
+    check("all granted -> no Allow buttons", len(_buttons(pp)), 0)
+    check("all granted -> no reset button", pp.reset_btn.isVisibleTo(pp), False)
+with mock.patch.object(sys, "frozen", False, create=True):
+    pp.refresh(force=True)
+    check("from source the note says Python/Terminal get the grant", "Python" in pp.note.text(), True)
+
+# --- the running app arms its hotkey once Input Monitoring is granted, quietly ------------------
+
+
+class _HK:
+    def __init__(self, ok, combo="ctrl+alt+m"):
+        self._hotkey_ok, self.cfg, self.started = ok, {"hotkey_show": combo}, 0
+        self.tray = None
+
+    def _start_hotkey(self):
+        self.started += 1
+        self._hotkey_ok = True
+
+
+_retry = waveflow.WaveFlow._retry_hotkey_if_permitted
+with mock.patch.object(osbridge, "hotkey_supported", lambda c: c != "ctrl+alt+é"):
+    for label, obj, missing, want in (
+            ("already working -> nothing", _HK(True), [], 0),
+            ("still no permission -> nothing (no warning every 3 s)", _HK(False), [("Input Monitoring", "")], 0),
+            ("unsupported key -> nothing", _HK(False, "ctrl+alt+é"), [], 0),
+            ("permission granted -> armed", _HK(False), [], 1)):
+        with mock.patch.object(osbridge, "missing_permissions", lambda m=missing: m):
+            _retry(obj)
+        check(f"hotkey retry: {label}", obj.started, want)
+_wfsrc = Path(waveflow.__file__).read_text(encoding="utf-8")
+check("the retry timer runs on macOS", "self._hk_retry.timeout.connect(self._retry_hotkey_if_permitted)" in _wfsrc, True)
+_wz = (Path(__file__).resolve().parent / "wizard.py").read_text(encoding="utf-8")
+_st2 = (Path(__file__).resolve().parent / "settings.py").read_text(encoding="utf-8")
+check("wizard uses the shared panel", "PermissionPanel()" in _wz, True)
+check("Settings shows it too (permissions can be revoked later)", "PermissionPanel()" in _st2, True)
 
 if FAILS:
     print("OSBRIDGE_FAIL\n" + "\n".join(FAILS))
