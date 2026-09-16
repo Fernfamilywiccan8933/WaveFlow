@@ -10,6 +10,20 @@ Engine: NVIDIA **Parakeet TDT 0.6B v2** (English), via ONNX Runtime (default) or
 
 > Status: v1. Windows client only. English only.
 
+## What it looks like
+
+| Setup wizard — where the engine runs | Configure and start it |
+|---|---|
+| <img src="docs/shot_wizard_where.png" width="430"> | <img src="docs/shot_wizard_configure.png" width="430"> |
+
+| Hotkey, microphone and look | Settings — connection |
+|---|---|
+| <img src="docs/shot_wizard_last.png" width="430"> | <img src="docs/shot_settings_connection.png" width="430"> |
+
+| Microphone and sensitivity | Uninstall: everything it made, nothing else |
+|---|---|
+| <img src="docs/shot_settings_microphone.png" width="430"> | <img src="docs/shot_settings_uninstall.png" width="430"> |
+
 ---
 
 ## Pick a setup
