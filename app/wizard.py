@@ -25,20 +25,21 @@ from PySide6.QtWidgets import (QCheckBox, QDialog, QFrame, QGridLayout, QHBoxLay
 import remote_install as RI
 import setup_logic as S
 from panels import MicPanel, SkinPicker
-from wizard_ui import (BAD, BLUSH, MINT, SKY, VIO, WARN, Card, CheckRow, Segmented, StepItem, TitleBar,
-                       fit_to_screen, round_window_corners)
+from wizard_ui import (BAD, BLUSH, DISPLAY, FALLBACK, MINT, MONO, SKY, TEXT, VIO, WARN, Card,
+                       CheckRow, Segmented, StepItem, TitleBar, fit_to_screen,
+                       round_window_corners)
 
 STEPS = ["Welcome", "Where it runs", "Configure", "Test connection", "Hotkey, mic & look"]
 
 QSS = f"""
 QDialog#wizard{{background:#12151c;border:1px solid rgba(255,255,255,0.08);}}
-QWidget{{color:#e9ecf3;font-family:'Segoe UI Variable Text','Segoe UI';font-size:13px;background:transparent;}}
+QWidget{{color:#e9ecf3;font-family:'{TEXT}','{FALLBACK}';font-size:13px;background:transparent;}}
 #titlebar{{background:#12151c;border-bottom:1px solid rgba(255,255,255,0.08);}}
 QPushButton#winbtn{{background:transparent;border:none;color:#5d6477;font-size:13px;border-radius:0;padding:0;}}
 QPushButton#winbtn:hover{{background:rgba(255,255,255,0.06);color:#e9ecf3;}}
 #rail{{background:rgba(0,0,0,0.18);border-right:1px solid rgba(255,255,255,0.08);}}
 #preview{{background:#07090d;border-left:1px solid rgba(255,255,255,0.08);}}
-QLabel#h2{{font-family:'Segoe UI Variable Display','Segoe UI';font-size:19px;font-weight:600;}}
+QLabel#h2{{font-family:'{DISPLAY}','{FALLBACK}';font-size:19px;font-weight:600;}}
 QLabel#lead{{color:#8d94a6;font-size:13px;}}
 QLabel#hint{{color:#5d6477;font-size:11.5px;}}
 QLabel#lbl{{color:#8d94a6;font-size:11.5px;}}
@@ -65,7 +66,7 @@ QLineEdit,QSpinBox,QComboBox,QKeySequenceEdit{{background:#0c0f15;border:1px sol
   border-radius:7px;padding:7px 10px;selection-background-color:#3aa9e6;}}
 QLineEdit:focus,QSpinBox:focus,QComboBox:focus{{border-color:rgba(87,200,255,0.6);}}
 QComboBox QAbstractItemView{{background:#12151c;border:1px solid rgba(255,255,255,0.12);selection-background-color:#223344;}}
-QTextEdit{{background:#07090d;border:none;font-family:'Cascadia Code',Consolas;font-size:12px;color:#cfd6e4;}}
+QTextEdit{{background:#07090d;border:none;font-family:'{MONO}',monospace;font-size:12px;color:#cfd6e4;}}
 QCheckBox{{color:#c9cfdc;spacing:6px;}}
 QProgressBar{{background:rgba(255,255,255,0.06);border:none;border-radius:4px;max-height:8px;}}
 QPushButton#danger{{background:rgba(255,107,127,0.1);border:1px solid rgba(255,107,127,0.45);color:#ffb3bd;
@@ -78,7 +79,7 @@ QLabel#warnbox{{background:rgba(255,196,107,0.06);border:1px solid rgba(255,196,
 QCheckBox::indicator{{width:16px;height:16px;border:1px solid rgba(255,255,255,0.28);border-radius:4px;background:#0c0f15;}}
 QCheckBox::indicator:checked{{background:#57c8ff;border-color:#57c8ff;}}
 QCheckBox::indicator:disabled{{border-color:rgba(255,255,255,0.08);background:transparent;}}
-QTextEdit#previewtext{{background:#07090d;border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:8px;font-family:Consolas;font-size:12px;}}
+QTextEdit#previewtext{{background:#07090d;border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:8px;font-family:'{MONO}',monospace;font-size:12px;}}
 QProgressBar::chunk{{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 {MINT},stop:0.45 {SKY},stop:0.8 {VIO},stop:1 {BLUSH});border-radius:4px;}}
 """
 

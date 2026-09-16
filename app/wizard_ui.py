@@ -15,14 +15,33 @@ from PySide6.QtWidgets import QAbstractButton, QButtonGroup, QHBoxLayout, QLabel
 MINT, SKY, VIO, BLUSH, BAD, WARN = "#37e0c8", "#57c8ff", "#8a7bff", "#ff7bc8", "#ff6b7f", "#ffc46b"
 TX, MUT, DIM = QColor("#e9ecf3"), QColor("#8d94a6"), QColor("#5d6477")
 LINE, HAIR = QColor(255, 255, 255, 23), QColor(255, 255, 255, 46)
-DISPLAY = "Segoe UI Variable Display"
-TEXT = "Segoe UI Variable Text"
+# Typography is per-platform, in ONE place. The macOS port branched on IS_MAC about ten times for
+# logic and never once for type, which is why the wizard rendered in the wrong face at the wrong
+# size on a Mac. Measured there 2026-09-16.
+#
+# None of the Windows families exist on macOS. Qt does not error on a missing family — it
+# substitutes silently, so the layout was being drawn against metrics nobody designed for, and
+# every launch paid ~73ms building alias tables looking for fonts that were never there.
+if sys.platform == "darwin":
+    DISPLAY, TEXT, MONO, FALLBACK = "SF Pro Display", "SF Pro Text", "SF Mono", "Helvetica Neue"
+else:
+    DISPLAY, TEXT, MONO, FALLBACK = ("Segoe UI Variable Display", "Segoe UI Variable Text",
+                                     "Cascadia Code", "Segoe UI")
 
 
 def font(size: float, weight=QFont.Normal, family=TEXT) -> QFont:
+    """`size` is PIXELS, and is honoured as pixels on every platform.
+
+    This used to be `setPointSizeF(size * 0.75)`, the px->pt conversion for a 96 DPI screen. That
+    is right on Windows and wrong on macOS, where Qt reports 72 DPI and a point IS a pixel — so
+    the multiplier was applied to a conversion that should not happen, and all 14 call sites came
+    out a quarter too small. Measured on the Mac: font(13) resolved to pixelSize 10.
+    setPixelSize sidesteps the DPI question entirely and keeps the design's px values literal.
+    Retina is unaffected: Qt still scales by devicePixelRatio, so the text stays sharp.
+    """
     f = QFont(family)
-    f.setFamilies([family, "Segoe UI"])
-    f.setPointSizeF(size * 0.75)          # px -> pt at 96 dpi
+    f.setFamilies([family, FALLBACK])
+    f.setPixelSize(max(1, round(size)))
     f.setWeight(weight)
     return f
 
@@ -222,7 +241,7 @@ class CheckRow(QWidget):
         p.setFont(font(13))
         p.setPen(TX if self.state is not None else MUT)
         p.drawText(QRectF(c.right() + 12, r.y(), r.width() * 0.6, r.height()), Qt.AlignVCenter, self.name)
-        p.setFont(QFont("Cascadia Code", 9))
+        p.setFont(font(12, family=MONO))     # MONO, not a Windows-only family by name
         p.setPen(MUT)
         p.drawText(QRectF(r.x(), r.y(), r.width() - 14, r.height()), Qt.AlignVCenter | Qt.AlignRight, self.detail)
 

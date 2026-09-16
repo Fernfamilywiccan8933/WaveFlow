@@ -61,6 +61,44 @@ for i, page_name in enumerate(["welcome", "where", "configure", "test", "hotkey"
           0 <= top and bottom <= w.height(), True)
     check(f"{page_name}: primary button is visible", b.isVisibleTo(w), True)
 
+
+# --- typography: sizes are PIXELS, families exist on this platform ------------------------
+# Measured on a real Mac 2026-09-16. font() used setPointSizeF(size * 0.75), the px->pt
+# conversion for a 96 DPI screen. macOS reports 72 DPI, where a point IS a pixel, so the
+# multiplier was applied to a conversion that should not happen and all 14 call sites came out a
+# quarter too small: font(13) resolved to pixelSize 10. Silent, and it moves every measurement
+# the layout was tuned against.
+import wizard_ui as U  # noqa: E402
+
+for px in (9, 11, 12, 13, 14, 19):
+    f = U.font(px)
+    check(f"font({px}) is {px} real pixels", f.pixelSize(), px)
+check("font() never returns a zero size", U.font(0.4).pixelSize() >= 1, True)
+check("half sizes round rather than truncate", U.font(11.5).pixelSize(), 12)
+
+# Windows must be byte-identical to before: pointSizeF(9.75) at 96 DPI was already 13 pixels.
+# This fix is a macOS correction, not a Windows redesign.
+if sys.platform == "win32":
+    check("Windows font(13) is unchanged at 13px", U.font(13).pixelSize(), 13)
+
+# Every family named anywhere must be one this platform actually has. Qt does not error on a
+# missing family, it substitutes silently — which is why this went unnoticed until someone looked
+# at a Mac screen.
+WINDOWS_ONLY = ("Segoe UI", "Cascadia Code", "Consolas")
+MAC_ONLY = ("SF Pro", "SF Mono", "Helvetica Neue")
+banned = MAC_ONLY if sys.platform == "win32" else WINDOWS_ONLY
+for name in ("DISPLAY", "TEXT", "MONO", "FALLBACK"):
+    fam = getattr(U, name)
+    check(f"{name} is not a foreign family ({fam})",
+          any(b in fam for b in banned), False)
+
+# The stylesheet must interpolate the same constants, not hardcode families a second time.
+import wizard as WZ  # noqa: E402
+for bad in banned:
+    check(f"the wizard stylesheet does not hardcode {bad}", bad in WZ.QSS, False)
+check("the stylesheet uses this platform's text family", U.TEXT in WZ.QSS, True)
+check("the stylesheet uses this platform's mono family", U.MONO in WZ.QSS, True)
+
 if FAILS: print("FIT_FAIL\n"+"\n".join(FAILS)); raise SystemExit(1)
 print(f"FIT_OK — wizard min {w.minimumWidth()}x{w.minimumHeight()}, "
       f"settings min {s.minimumWidth()}x{s.minimumHeight()}; both under 1152x700")

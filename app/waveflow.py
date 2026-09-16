@@ -1386,6 +1386,18 @@ class WaveFlow(QWidget):
                     self.error_sig.emit("Hotkey needs permission — grant WaveFlow "
                                         "Input Monitoring in System Settings → Privacy & Security")
         log.info("hotkeys (%s): %s", "RegisterHotKey" if IS_WINDOWS else "CGEventTap", results)
+        # A refused hotkey is the difference between a working app and one that does nothing at
+        # all, so it cannot live only in the log. Reported from a Mac 2026-09-16: "the app logs it
+        # and carries on", leaving a running WaveFlow whose hotkey is dead with no reason on
+        # screen. The balloon above is easily missed; this keeps the answer somewhere the user
+        # can go back to, on the icon they are already staring at when they wonder why nothing
+        # happened.
+        self._hotkey_ok = bool(self._hk_filter.callbacks)
+        if not self._hotkey_ok and getattr(self, "tray", None) is not None:
+            why = ("hotkey needs Input Monitoring — System Settings → Privacy & Security"
+                   if not IS_WINDOWS else
+                   f"hotkey {self.cfg['hotkey_show']} is taken by another app")
+            self.tray.setToolTip(f"WaveFlow — {why}")
 
     def _capture_target(self):
         """Remember the window that had focus when dictation began, so the text
@@ -2163,7 +2175,10 @@ class WaveFlow(QWidget):
             return
         send_text((" " if self._typed_any else "") + text)
         self._typed_any = True
-        self.tray.setToolTip(f"WaveFlow — last STT {self.last_ms}ms")
+        # A dead hotkey outranks a latency figure: the latency is trivia, the hotkey is whether
+        # the app works at all. Do not let a successful transcription overwrite that warning.
+        if getattr(self, "_hotkey_ok", True):
+            self.tray.setToolTip(f"WaveFlow — last STT {self.last_ms}ms")
         log.info("segment(%s) typed %d chars in %dms -> %r",
                  reason, len(text), self.last_ms, text)
 
