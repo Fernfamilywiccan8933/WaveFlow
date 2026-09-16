@@ -202,6 +202,8 @@ python app/test_uninstall.py        # UNINSTALL_OK
 
 ## Licences
 
-WaveFlow code: [MIT](LICENSE). Third-party parts: [NOTICE.md](NOTICE.md).
+WaveFlow code: **[GNU GPL v3](LICENSE)** — free to use and change; if you give a changed
+version to other people, publish your source under GPL v3 too. Third-party parts:
+[NOTICE.md](NOTICE.md).
 The Parakeet model is **CC-BY-4.0** (NVIDIA; ONNX conversion by istupakov). Credit them if you
 redistribute it.

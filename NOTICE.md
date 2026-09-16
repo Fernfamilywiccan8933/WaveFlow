@@ -1,6 +1,8 @@
 # Third-party notices
 
-WaveFlow's own code is MIT. It uses, but does not include, the following:
+WaveFlow's own code is GNU GPL v3 (see LICENSE). Every licence below is compatible with it:
+MIT, BSD and Apache-2.0 code may be combined into a GPL v3 program, and PySide6 is used as an
+unmodified LGPL-3.0 library. It uses, but does not include, the following:
 
 | Component | Licence | Source |
 |---|---|---|
