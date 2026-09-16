@@ -26,13 +26,14 @@ Engine: NVIDIA **Parakeet TDT 0.6B v2** (English), via ONNX Runtime (default) or
 
 **Download the app**
 
-[**WaveFlow.exe**](../../releases/latest) → double-click. Nothing to install.
+[**WaveFlow.exe**](../../releases/latest) → double-click. Nothing else to install.
 
 **Or install from PowerShell**
 
 ```powershell
-$u = "https://github.com/MrAbookah/WaveFlow" +
-     "/releases/latest/download/WaveFlow.exe"
+$r = "MrAbookah/WaveFlow"
+$u = "https://github.com/$r/releases" +
+     "/latest/download/WaveFlow.exe"
 iwr $u -OutFile WaveFlow.exe
 .\WaveFlow.exe
 ```
@@ -40,7 +41,8 @@ iwr $u -OutFile WaveFlow.exe
 **Or run from source**
 
 ```powershell
-git clone https://github.com/MrAbookah/WaveFlow.git
+git clone `
+  https://github.com/MrAbookah/WaveFlow.git
 cd WaveFlow
 py -3.12 -m venv venv
 venv\Scripts\pip install -r requirements.txt
@@ -50,7 +52,8 @@ venv\Scripts\python app\waveflow.py
 Check a download is really ours:
 
 ```powershell
-Get-FileHash .\WaveFlow.exe -Algorithm SHA256
+Get-FileHash .\WaveFlow.exe `
+  -Algorithm SHA256
 ```
 
 Compare it with `WaveFlow.exe.sha256` beside the download.
@@ -60,13 +63,14 @@ Compare it with `WaveFlow.exe.sha256` beside the download.
 
 **Download the app**
 
-No prebuilt `.app` yet — a Mac build has to be made on a Mac, and none has been published. Build
-it yourself in one command below; it takes about a minute.
+No prebuilt `.app` yet. A Mac bundle has to be built on a Mac, and none has been published. The
+command below builds one in about a minute.
 
 **Install from Terminal**
 
 ```bash
-git clone https://github.com/MrAbookah/WaveFlow.git
+git clone \
+  https://github.com/MrAbookah/WaveFlow.git
 cd WaveFlow
 python3 -m venv venv
 venv/bin/pip install -r requirements.txt \
@@ -79,11 +83,11 @@ venv/bin/python app/waveflow.py
 **Or make a double-clickable app**
 
 ```bash
-venv/bin/python app/build.py   # -> dist/WaveFlow.app
+venv/bin/python app/build.py
 ```
 
-Gatekeeper blocks the first double-click on an unsigned app. Right-click it, choose **Open**
-once, and it opens normally after that.
+That writes `dist/WaveFlow.app`. Gatekeeper blocks the first double-click on an unsigned app —
+right-click it, choose **Open** once, and it opens normally after that.
 
 </td>
 </tr>
