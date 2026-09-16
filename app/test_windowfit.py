@@ -30,6 +30,9 @@ from wizard_ui import fit_to_screen
 fit_to_screen(w, 3000, 2000)      # ask for something absurd
 check("absurd size is clamped", w.height() <= scr.height(), True)
 
+# SettingsWindow starts a health-check thread in its constructor, which does a real HTTP
+# request. Same race as above, same reason to stub it: this test measures geometry.
+S2.SettingsWindow._check_health = lambda self: None
 s=S2.SettingsWindow({}, engine=None); s.show(); app.processEvents()
 MAC_MIN_W, MAC_MIN_H = 1152, 700   # 12-inch MacBook, the smallest modern Mac display
 check("settings fits the smallest Mac", s.minimumWidth() <= MAC_MIN_W and s.minimumHeight() <= MAC_MIN_H, True)
@@ -46,6 +49,12 @@ check("settings has a size grip", any(isinstance(c,QSizeGrip) for c in s.childre
 # Continue sat at y=862 and was not visible at all. Operator: "the continue button is gone from
 # the wizard". The footer now lives OUTSIDE the scroll area; this is what proves it stays there.
 PRIMARY = ("Continue", "Get started", "Finish", "Start engine", "Build & start")
+# go() has side effects per page: step 3 fires a real connection test on a thread and step
+# 4 opens the microphone. This test is about LAYOUT, and doing real I/O to measure a button
+# is both slow and a race — it segfaulted here, with a worker mid-request while the main
+# thread drove Qt. Stub them: the layout is identical either way.
+w._run_checks = lambda *a, **k: None
+w._start_mic = lambda *a, **k: None
 for i, page_name in enumerate(["welcome", "where", "configure", "test", "hotkey"]):
     w.go(i)
     app.processEvents()
@@ -68,6 +77,7 @@ for i, page_name in enumerate(["welcome", "where", "configure", "test", "hotkey"
 # multiplier was applied to a conversion that should not happen and all 14 call sites came out a
 # quarter too small: font(13) resolved to pixelSize 10. Silent, and it moves every measurement
 # the layout was tuned against.
+from PySide6.QtGui import QFontInfo  # noqa: E402
 import wizard_ui as U  # noqa: E402
 
 for px in (9, 11, 12, 13, 14, 19):
@@ -81,23 +91,42 @@ check("half sizes round rather than truncate", U.font(11.5).pixelSize(), 12)
 if sys.platform == "win32":
     check("Windows font(13) is unchanged at 13px", U.font(13).pixelSize(), 13)
 
-# Every family named anywhere must be one this platform actually has. Qt does not error on a
-# missing family, it substitutes silently — which is why this went unnoticed until someone looked
-# at a Mac screen.
-WINDOWS_ONLY = ("Segoe UI", "Cascadia Code", "Consolas")
-MAC_ONLY = ("SF Pro", "SF Mono", "Helvetica Neue")
-banned = MAC_ONLY if sys.platform == "win32" else WINDOWS_ONLY
-for name in ("DISPLAY", "TEXT", "MONO", "FALLBACK"):
-    fam = getattr(U, name)
-    check(f"{name} is not a foreign family ({fam})",
-          any(b in fam for b in banned), False)
+# Every family must be one THIS MACHINE ACTUALLY HAS.
+#
+# The first version of this check asserted only that a name was not from the *other* platform: no
+# Segoe on a Mac, no SF Pro on Windows. "SF Pro Text" duly passed on macOS — and SF Pro is not
+# installed on a stock Mac at all, so the wizard silently fell back to Helvetica Neue with the
+# test green. Caught on real hardware 2026-09-16. A naming convention is not the failure mode; a
+# silent substitution is, and only the font database can see one.
+#
+# The offscreen Qt platform used by CI reports ZERO installed families, so this can only be
+# judged where there are fonts to judge. Skipped loudly rather than silently, because a check
+# that quietly does nothing is how the first version got here.
+from PySide6.QtGui import QFontDatabase, QFontInfo  # noqa: E402
 
-# The stylesheet must interpolate the same constants, not hardcode families a second time.
-import wizard as WZ  # noqa: E402
-for bad in banned:
-    check(f"the wizard stylesheet does not hardcode {bad}", bad in WZ.QSS, False)
-check("the stylesheet uses this platform's text family", U.TEXT in WZ.QSS, True)
-check("the stylesheet uses this platform's mono family", U.MONO in WZ.QSS, True)
+_installed = set(QFontDatabase.families())
+if not _installed:
+    print("  (font checks skipped: this Qt platform reports no installed families)")
+else:
+    for _name in ("DISPLAY", "TEXT", "MONO", "FALLBACK"):
+        _fam = getattr(U, _name)
+        check(f"{_name} is installed on this machine ({_fam})", _fam in _installed, True)
+    # and Qt must hand back the family we asked for, not a substitute for it
+    for _label, _fam in (("text", U.TEXT), ("mono", U.MONO)):
+        _got = QFontInfo(U.font(13, family=_fam)).family()
+        check(f"{_label} font is not substituted ({_fam} -> {_got})",
+              _got.lower().lstrip("."), _fam.lower().lstrip("."))
+
+# The stylesheet must name the SAME resolved families, never a second hardcoded set.
+_sheet = W.qss()
+check("the stylesheet uses this platform's text family", U.TEXT in _sheet, True)
+check("the stylesheet uses this platform's mono family", U.MONO in _sheet, True)
+# A banned token only counts if it is not part of a family this platform legitimately uses:
+# "Segoe UI Variable" is a substring of the real Windows family name.
+_resolved = " ".join((U.TEXT, U.MONO, U.DISPLAY, U.FALLBACK))
+for _bad in ("Segoe UI Variable", "Cascadia Code", "Consolas", "SF Pro"):
+    if _bad not in _resolved:
+        check(f"the stylesheet does not hardcode {_bad}", _bad in _sheet, False)
 
 if FAILS: print("FIT_FAIL\n"+"\n".join(FAILS)); raise SystemExit(1)
 print(f"FIT_OK — wizard min {w.minimumWidth()}x{w.minimumHeight()}, "

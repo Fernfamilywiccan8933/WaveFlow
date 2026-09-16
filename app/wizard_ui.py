@@ -22,14 +22,55 @@ LINE, HAIR = QColor(255, 255, 255, 23), QColor(255, 255, 255, 46)
 # None of the Windows families exist on macOS. Qt does not error on a missing family — it
 # substitutes silently, so the layout was being drawn against metrics nobody designed for, and
 # every launch paid ~73ms building alias tables looking for fonts that were never there.
-if sys.platform == "darwin":
-    DISPLAY, TEXT, MONO, FALLBACK = "SF Pro Display", "SF Pro Text", "SF Mono", "Helvetica Neue"
-else:
-    DISPLAY, TEXT, MONO, FALLBACK = ("Segoe UI Variable Display", "Segoe UI Variable Text",
-                                     "Cascadia Code", "Segoe UI")
+# NEVER hardcode the macOS system face. "SF Pro Text" / "SF Pro Display" / "SF Mono" are NOT
+# installed on a stock Mac — they are a separate download from Apple Developer. Naming them looks
+# right and silently misses, and every call then lands on the fallback: measured on a real Mac
+# 2026-09-16, the wizard was rendering in Helvetica Neue, a legacy face. The family macOS actually
+# ships is registered as ".AppleSystemUIFont", a private name that is not safe to hardcode either.
+#
+# So ask Qt what the system font IS rather than guessing its name. That is correct on every macOS
+# version without tracking Apple's font naming, and it cannot silently miss.
+#
+# Resolved LAZILY: QFontDatabase needs a QApplication, and this module is imported by panels.py
+# and by tests that may not have built one yet. Cached after the first real answer.
+_FAMILIES = None
 
 
-def font(size: float, weight=QFont.Normal, family=TEXT) -> QFont:
+def families() -> tuple[str, str, str, str]:
+    """(display, text, mono, fallback) for this platform. Cached."""
+    global _FAMILIES
+    if _FAMILIES is not None:
+        return _FAMILIES
+    if sys.platform != "darwin":
+        _FAMILIES = ("Segoe UI Variable Display", "Segoe UI Variable Text",
+                     "Cascadia Code", "Segoe UI")
+        return _FAMILIES
+    fallback = "Helvetica Neue"
+    try:
+        from PySide6.QtGui import QFontDatabase
+        from PySide6.QtWidgets import QApplication
+        if QApplication.instance() is None:
+            # No app yet: answer, but do NOT cache — the real answer is still to come.
+            return (fallback, fallback, "Menlo", fallback)
+        ui = QFontDatabase.systemFont(QFontDatabase.GeneralFont).family()
+        mono = QFontDatabase.systemFont(QFontDatabase.FixedFont).family()
+        _FAMILIES = (ui or fallback, ui or fallback, mono or "Menlo", fallback)
+    except Exception:
+        # Menlo has shipped with macOS since 10.6 and is a safe monospace floor.
+        _FAMILIES = (fallback, fallback, "Menlo", fallback)
+    return _FAMILIES
+
+
+def __getattr__(name):
+    """DISPLAY / TEXT / MONO / FALLBACK read through families(), so importers get the resolved
+    value rather than a guess frozen at import time."""
+    idx = {"DISPLAY": 0, "TEXT": 1, "MONO": 2, "FALLBACK": 3}.get(name)
+    if idx is None:
+        raise AttributeError(name)
+    return families()[idx]
+
+
+def font(size: float, weight=QFont.Normal, family=None) -> QFont:
     """`size` is PIXELS, and is honoured as pixels on every platform.
 
     This used to be `setPointSizeF(size * 0.75)`, the px->pt conversion for a 96 DPI screen. That
@@ -39,8 +80,10 @@ def font(size: float, weight=QFont.Normal, family=TEXT) -> QFont:
     setPixelSize sidesteps the DPI question entirely and keeps the design's px values literal.
     Retina is unaffected: Qt still scales by devicePixelRatio, so the text stays sharp.
     """
+    _display, _text, _mono, _fallback = families()
+    family = family or _text
     f = QFont(family)
-    f.setFamilies([family, FALLBACK])
+    f.setFamilies([family, _fallback])
     f.setPixelSize(max(1, round(size)))
     f.setWeight(weight)
     return f
@@ -241,7 +284,12 @@ class CheckRow(QWidget):
         p.setFont(font(13))
         p.setPen(TX if self.state is not None else MUT)
         p.drawText(QRectF(c.right() + 12, r.y(), r.width() * 0.6, r.height()), Qt.AlignVCenter, self.name)
-        p.setFont(font(12, family=MONO))     # MONO, not a Windows-only family by name
+        # families()[2], NOT a bare `MONO`. A module-level __getattr__ serves attribute access
+        # from OUTSIDE the module; a bare name inside it is an ordinary global lookup, which
+        # misses and raises NameError. Raised here it would land inside paintEvent, where Qt
+        # cannot propagate a Python exception — the process simply dies. That is exactly what
+        # happened: a segfault with no traceback, during app.processEvents().
+        p.setFont(font(12, family=families()[2]))
         p.setPen(MUT)
         p.drawText(QRectF(r.x(), r.y(), r.width() - 14, r.height()), Qt.AlignVCenter | Qt.AlignRight, self.detail)
 

@@ -25,13 +25,27 @@ from PySide6.QtWidgets import (QCheckBox, QDialog, QFrame, QGridLayout, QHBoxLay
 import remote_install as RI
 import setup_logic as S
 from panels import MicPanel, SkinPicker
-from wizard_ui import (BAD, BLUSH, DISPLAY, FALLBACK, MINT, MONO, SKY, TEXT, VIO, WARN, Card,
-                       CheckRow, Segmented, StepItem, TitleBar, fit_to_screen,
+from wizard_ui import (BAD, BLUSH, MINT, SKY, VIO, WARN, Card, CheckRow, Segmented,
+                       StepItem, TitleBar, families, fit_to_screen,
                        round_window_corners)
 
 STEPS = ["Welcome", "Where it runs", "Configure", "Test connection", "Hotkey, mic & look"]
 
-QSS = f"""
+_QSS_CACHE = None
+
+
+def qss() -> str:
+    """The stylesheet, built once the font families are known.
+
+    It was a module-level f-string, which froze whichever families were resolvable at
+    IMPORT time — and on macOS the real answer needs a live QApplication to ask Qt for the
+    system font. Building it on demand means the sheet always names the font that will
+    actually be used.
+    """
+    global _QSS_CACHE
+    if _QSS_CACHE is None:
+        DISPLAY, TEXT, MONO, FALLBACK = families()
+        _QSS_CACHE = f"""
 QDialog#wizard{{background:#12151c;border:1px solid rgba(255,255,255,0.08);}}
 QWidget{{color:#e9ecf3;font-family:'{TEXT}','{FALLBACK}';font-size:13px;background:transparent;}}
 #titlebar{{background:#12151c;border-bottom:1px solid rgba(255,255,255,0.08);}}
@@ -82,6 +96,15 @@ QCheckBox::indicator:disabled{{border-color:rgba(255,255,255,0.08);background:tr
 QTextEdit#previewtext{{background:#07090d;border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:8px;font-family:'{MONO}',monospace;font-size:12px;}}
 QProgressBar::chunk{{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 {MINT},stop:0.45 {SKY},stop:0.8 {VIO},stop:1 {BLUSH});border-radius:4px;}}
 """
+    return _QSS_CACHE
+
+
+def __getattr__(name):
+    """So `from wizard import QSS` still works — settings.py builds on it."""
+    if name == "QSS":
+        return qss()
+    raise AttributeError(name)
+
 
 
 def _lbl(text, name=None, wrap=True):
@@ -112,7 +135,7 @@ class SetupWizard(QDialog):
         self.setObjectName("wizard")
         self.setWindowTitle("WaveFlow setup")
         self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
-        self.setStyleSheet(QSS)
+        self.setStyleSheet(qss())
         self.resize(1040, 660)          # refit in showEvent, once the pages exist
         self.cfg = dict(cfg)
         self.engine = engine                  # LocalEngine owned by the app

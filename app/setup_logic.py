@@ -20,6 +20,15 @@ import subprocess
 import sys
 import threading
 import time
+
+# requests is imported HERE, on the main thread, not inside the worker that uses it.
+# A first-time import on a background thread while the main thread is busy with Qt is a
+# race, and it segfaults: caught 2026-09-16 when a test opened Settings (which starts a
+# health-check thread) and then drove the wizard. The real app happens to be safe today
+# only because waveflow imports stt, which imports requests, before any of this runs —
+# which is luck, not design. requests is a hard dependency either way, so there is
+# nothing to gain by deferring it.
+import requests
 from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlparse
@@ -821,7 +830,6 @@ def _resolves(host: str, timeout: float = 6.0) -> bool:
 def run_checks(url: str, token: str, sample: Path = SAMPLE_WAV, timeout: float = 6.0,
                require_token: bool = False) -> tuple[list[Check], str]:
     """The same 4 checks for every option. Returns (checks, one-line verdict)."""
-    import requests
     checks = [Check("Server answers", None), Check("Engine ready", None),
               Check("Token accepted", None), Check("Sample clip transcribed", None)]
     hdr = {"Authorization": f"Bearer {token}"} if token else {}

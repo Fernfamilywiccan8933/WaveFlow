@@ -13,6 +13,15 @@ import shutil
 import subprocess
 import threading
 import time
+
+# requests is imported HERE, on the main thread, not inside the worker that uses it.
+# A first-time import on a background thread while the main thread is busy with Qt is a
+# race, and it segfaults: caught 2026-09-16 when a test opened Settings (which starts a
+# health-check thread) and then drove the wizard. The real app happens to be safe today
+# only because waveflow imports stt, which imports requests, before any of this runs —
+# which is luck, not design. requests is a hard dependency either way, so there is
+# nothing to gain by deferring it.
+import requests
 from pathlib import Path
 
 from PySide6.QtCore import QObject, Qt, Signal
@@ -80,7 +89,6 @@ def row(v, title, hint="", widget=None, stretch_widget=False):
 
 
 def _health_ms(url: str, token: str) -> tuple[bool, int]:
-    import requests
     from stt import auth_headers
     t0 = time.time()
     try:
