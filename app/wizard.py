@@ -477,9 +477,11 @@ class SetupWizard(QDialog):
             c.clicked.connect(lambda _=False, i=i: self._set_engine(i))
             v.addWidget(c)
             self.eng_cards.append(c)
+        # macOS needs no extra package: the official onnxruntime wheel already carries CoreML, so
+        # this button only ever REPAIRS an install there and must not promise otherwise.
         self.gpu_install = QPushButton(
-            "Install GPU support  ·  " + ("onnxruntime-silicon" if S.IS_MAC
-                                          else "onnxruntime-directml"))
+            "Reinstall onnxruntime  ·  adds CoreML" if S.IS_MAC
+            else "Install GPU support  ·  onnxruntime-directml")
         self.gpu_install.clicked.connect(self._install_directml)
         v.addWidget(self.gpu_install)
 

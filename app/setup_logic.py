@@ -156,15 +156,23 @@ def onnx_providers() -> list[str]:
 
 
 def gpu_install_commands() -> list[list[str]]:
-    """Swap the CPU build of onnxruntime for this OS's GPU build.
+    """What to run so the GPU engine can work on THIS OS.
 
-    They cannot be installed side by side, hence the uninstall first. The package differs by
-    OS: onnxruntime-directml on Windows, onnxruntime-silicon on a Mac.
+    Windows needs a different package: onnxruntime-directml replaces onnxruntime, and the two
+    cannot be installed side by side, hence the uninstall first.
+
+    macOS needs NOTHING. The official onnxruntime wheel for macOS ships the CoreML execution
+    provider already. An earlier version of this function told Mac users to install
+    `onnxruntime-silicon`, a third-party build whose last release was 1.16.3 in January 2024 —
+    following that advice would have DOWNGRADED them from the current 1.30 and taken the CoreML
+    support away with it. Checked against PyPI, 2026-09-16. Reinstalling the official wheel is
+    the only sensible repair here, so that is what this offers.
     """
     py = sys.executable
-    pkg = "onnxruntime-silicon" if IS_MAC else "onnxruntime-directml"
+    if IS_MAC:
+        return [[py, "-m", "pip", "install", "--upgrade", "--force-reinstall", "onnxruntime"]]
     return [[py, "-m", "pip", "uninstall", "-y", "onnxruntime"],
-            [py, "-m", "pip", "install", pkg]]
+            [py, "-m", "pip", "install", "onnxruntime-directml"]]
 
 
 # Kept so nothing that already imports the old name breaks.
@@ -231,10 +239,11 @@ def engines_for(option: str, method: str, hw: Hardware) -> list[EngineChoice]:
         # accelerator, different install.
         if IS_MAC:
             out.append(EngineChoice("onnx-gpu", ENGINE_NAMES["onnx-gpu"],
-                                    "fp32 · 2.4 GB · CoreML (Apple Silicon or Intel Mac)",
+                                    "fp32 · 2.4 GB · CoreML (Apple Silicon or Intel Mac GPU)",
                                     hw.coreml,
                                     "" if hw.coreml else
-                                    "needs GPU support installed: pip install onnxruntime-silicon"))
+                                    "this onnxruntime has no CoreML support — reinstall the "
+                                    "official wheel"))
         else:
             out.append(EngineChoice("onnx-gpu", ENGINE_NAMES["onnx-gpu"],
                                     "fp32 · 2.4 GB · DirectML (any DirectX 12 GPU)", True,

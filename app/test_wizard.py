@@ -328,6 +328,45 @@ check("and the message names the host", "no-such-host-waveflow-test.invalid" in 
 check("an IP literal needs no lookup", S._resolves("127.0.0.1", 0.01), True)
 check("localhost resolves", S._resolves("localhost", 5.0), True)
 
+
+
+# --- the client must never ask the server for a device it does not accept ------------------
+# The bug this exists to stop, hit on a real Mac 2026-09-16: the client learned to emit
+# `--device coreml`, the server's argparse still had choices=[cpu, cuda, dml], and choosing the
+# ONNX GPU engine died with "choose from cpu, cuda, dml". The two lists live in different files
+# and nothing tied them together. Now something does.
+import re as _re  # noqa: E402
+
+_server_src = (Path(__file__).resolve().parent.parent / "server" / "parakeet_server.py")
+_text = _server_src.read_text(encoding="utf-8")
+_m = _re.search(r'"--device",\s*choices=\[([^\]]+)\]', _text)
+check("the server declares its device choices", bool(_m), True)
+if _m:
+    SERVER_DEVICES = {tok.strip().strip('"').strip("'") for tok in _m.group(1).split(",")}
+    emitted = set()
+    for _opt in ("local", "onsite", "vps"):
+        for _eng in ("onnx-cpu", "onnx-gpu"):
+            _a = S.server_args(S.Choices(option=_opt, engine=_eng))
+            if "--device" in _a:
+                emitted.add(_a[_a.index("--device") + 1])
+    # the device the local plan writes into config.json counts too
+    emitted.add(S.build_plan(S.Choices(option="local", engine="onnx-gpu"))
+                .config["engine"].get("device", "cpu"))
+    check("every device the client emits is one the server accepts",
+          sorted(emitted - SERVER_DEVICES), [])
+    check("the server accepts coreml", "coreml" in SERVER_DEVICES, True)
+    check("the server still accepts dml", "dml" in SERVER_DEVICES, True)
+    check("the server still accepts cuda", "cuda" in SERVER_DEVICES, True)
+
+# The macOS GPU advice must not point at an abandoned package. onnxruntime-silicon's last release
+# was 1.16.3 in January 2024; the official wheel is current and already ships CoreML, so the old
+# advice would have downgraded a Mac user and removed the very support they were after.
+_gpu_cmds = " ".join(" ".join(c) for c in S.gpu_install_commands())
+check("GPU advice does not name the abandoned onnxruntime-silicon",
+      "onnxruntime-silicon" in _gpu_cmds, False)
+check("GPU advice names a real package",
+      "onnxruntime" in _gpu_cmds, True)
+
 if FAILS:
     print("WIZARD_FAIL\n" + "\n".join(FAILS))
     raise SystemExit(1)

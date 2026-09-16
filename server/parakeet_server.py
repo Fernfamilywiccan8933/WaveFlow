@@ -965,8 +965,9 @@ def main():
                     help="folder with the istupakov/parakeet-tdt-0.6b-v2-onnx files")
     ap.add_argument("--onnx-quant", choices=["int8", "fp32"], default="int8",
                     help="int8 = small, for CPU; fp32 = full model, for GPU")
-    ap.add_argument("--device", choices=["cpu", "cuda", "dml"], default="cpu",
-                    help="onnx only: cuda = NVIDIA (onnxruntime-gpu), dml = DirectML")
+    ap.add_argument("--device", choices=["cpu", "cuda", "dml", "coreml"], default="cpu",
+                    help="onnx only: cuda = NVIDIA (onnxruntime-gpu), dml = DirectML (Windows), "
+                         "coreml = Apple Silicon or an Intel Mac GPU (onnxruntime-silicon)")
     ap.add_argument("--gpu-mem-mb", type=int, default=2048,
                     help="onnx cuda: cap on the GPU memory arena (context is extra, ~0.4GB)")
     ap.add_argument("--threads", type=int, default=4,
@@ -1019,9 +1020,26 @@ def main():
         cuda_opts = {"arena_extend_strategy": "kSameAsRequested",
                      "cudnn_conv_algo_search": "HEURISTIC",
                      "gpu_mem_limit": args.gpu_mem_mb * 1024 * 1024}
+        # CoreML runs the graph on the Apple Neural Engine and GPU. MLProgram is the modern
+        # format; the older NeuralNetwork one silently falls back to CPU for several of the ops
+        # this model uses. CPUExecutionProvider stays last in every list on purpose: CoreML
+        # refuses whole subgraphs it cannot take, and without a fallback the load fails outright
+        # instead of running the rest on the CPU.
+        coreml_opts = {"ModelFormat": "MLProgram",
+                       "MLComputeUnits": "ALL",
+                       "AllowLowPrecisionAccumulationOnGPU": "1"}
         providers = {"cpu": ["CPUExecutionProvider"],
                      "cuda": [("CUDAExecutionProvider", cuda_opts), "CPUExecutionProvider"],
-                     "dml": ["DmlExecutionProvider", "CPUExecutionProvider"]}[args.device]
+                     "dml": ["DmlExecutionProvider", "CPUExecutionProvider"],
+                     "coreml": [("CoreMLExecutionProvider", coreml_opts),
+                                "CPUExecutionProvider"]}[args.device]
+        if args.device == "coreml" and "CoreMLExecutionProvider" not in ort.get_available_providers():
+            # Said plainly rather than letting ORT fall back silently and leave the operator
+            # wondering why "GPU" performs exactly like CPU.
+            print("CoreML not available in this onnxruntime build — running on CPU instead. "
+                  "For the GPU: pip uninstall onnxruntime && pip install onnxruntime-silicon",
+                  flush=True)
+            providers = ["CPUExecutionProvider"]
         model = onnx_asr.load_model("nemo-parakeet-tdt-0.6b-v2", args.onnx_dir or None,
                                     quantization=None if args.onnx_quant == "fp32" else "int8",
                                     sess_options=so, providers=providers)
