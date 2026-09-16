@@ -38,12 +38,39 @@ from urllib.parse import urlparse
 # by default) would have deleted it. Frozen: the folder holding the .exe. (Found 2026-09-15, pre-build.)
 FROZEN = bool(getattr(sys, "frozen", False))
 ROOT = Path(sys.executable).resolve().parent if FROZEN else Path(__file__).resolve().parent.parent
-APP_DIR = ROOT if FROZEN else ROOT / "app"          # where config.json and waveflow.log live
+_FROZEN_MAC = FROZEN and sys.platform == "darwin"
+
+# A frozen macOS app must NEVER write inside its own bundle.
+#
+# "Everything lives in WaveFlow's own folder" is right for a portable Windows .exe and for a source
+# checkout. In a Mac bundle, though, the executable's folder is WaveFlow.app/Contents/MacOS, so
+# config, log and every downloaded model were being written INSIDE the app. Observed on disk on a
+# real Mac 2026-09-16 — the log sat at WaveFlow.app/Contents/MacOS/waveflow.log. That breaks three
+# things at once:
+#   * every update deletes the user's settings and hundreds of MB of models, because installing
+#     a new bundle replaces the old one wholesale;
+#   * /Applications is usually not writable by a standard user, so the writes simply fail;
+#   * writing into a signed bundle invalidates the signature, and macOS ties Accessibility and
+#     Input Monitoring to that signature.
+# So a frozen Mac app keeps its state where macOS expects it. Everything else is unchanged.
+_MAC_SUPPORT = Path.home() / "Library" / "Application Support" / "WaveFlow"
+_MAC_LOGS = Path.home() / "Library" / "Logs" / "WaveFlow"
 
 
 def app_dir() -> Path:
-    """APP_DIR computed from the CURRENT ROOT (tests and tools may point ROOT elsewhere)."""
+    """Where config.json lives. Computed from the CURRENT ROOT (tests may point ROOT elsewhere)."""
+    if _FROZEN_MAC:
+        return _MAC_SUPPORT
     return ROOT if FROZEN else ROOT / "app"
+
+
+def log_dir() -> Path:
+    """Where waveflow.log lives. ~/Library/Logs on a frozen Mac, which is also where Console.app
+    looks; next to config.json everywhere else."""
+    return _MAC_LOGS if _FROZEN_MAC else app_dir()
+
+
+APP_DIR = app_dir()                                   # config.json
 
 
 def is_app_folder(p: Path) -> bool:
@@ -309,7 +336,12 @@ def app_data() -> Path:
     """Everything WaveFlow writes (models, docker .env, engine log) lives INSIDE its own folder, so
     two copies on one PC never share files and deleting the folder removes it completely.
     WAVEFLOW_DATA overrides the location."""
-    return Path(os.environ.get("WAVEFLOW_DATA") or (ROOT / "data"))
+    override = os.environ.get("WAVEFLOW_DATA")
+    if override:
+        return Path(override)
+    # Frozen Mac: outside the bundle, for the reasons at the top of this file. An update must not
+    # take the user's models with it.
+    return (_MAC_SUPPORT / "data") if _FROZEN_MAC else (ROOT / "data")
 
 
 def models_dir() -> Path:

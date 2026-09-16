@@ -36,7 +36,11 @@ for hw in (ALL, BARE):
 
 loc = {e.engine: e for e in S.engines_for("local", "", BARE)}
 check("local: ONNX CPU available", loc["onnx-cpu"].available, True)
-check("local: ONNX GPU offered", loc["onnx-gpu"].available, True)
+# "offered" is true on Windows only. On a Mac the GPU engine is deliberately shown OFF — CoreML
+# aborts inside onnxruntime on this model — so asserting it is available everywhere failed
+# on real Mac hardware (reported 2026-09-16). The per-OS branch below checks the Mac case.
+if not S.IS_MAC:
+    check("local: ONNX GPU offered", loc["onnx-gpu"].available, True)
 # The GPU story is per-OS, so the assertion has to be too. DirectML does not exist on a Mac and
 # CoreML does not exist on Windows; asserting one on the other machine is asserting a bug.
 if S.IS_MAC:

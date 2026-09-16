@@ -54,6 +54,17 @@ def families() -> tuple[str, str, str, str]:
             return (fallback, fallback, "Menlo", fallback)
         ui = QFontDatabase.systemFont(QFontDatabase.GeneralFont).family()
         mono = QFontDatabase.systemFont(QFontDatabase.FixedFont).family()
+        # Trust Qt's answer only if that family is actually installed. Under some Qt platforms —
+        # the offscreen one used for testing, reported from a Mac 2026-09-16 — systemFont()
+        # returns placeholder names like "Sans Serif" and "monospace" that exist nowhere, and
+        # naming a missing family is exactly the silent substitution this function exists to
+        # prevent. The private ".AppleSystemUIFont" is a real installed family and passes.
+        installed = set(QFontDatabase.families())
+        if installed:
+            if ui not in installed:
+                ui = fallback if fallback in installed else ui
+            if mono not in installed:
+                mono = "Menlo" if "Menlo" in installed else mono
         _FAMILIES = (ui or fallback, ui or fallback, mono or "Menlo", fallback)
     except Exception:
         # Menlo has shipped with macOS since 10.6 and is a safe monospace floor.

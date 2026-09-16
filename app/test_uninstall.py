@@ -58,6 +58,9 @@ with tempfile.TemporaryDirectory() as t:
         else:
             check("macOS makes no shortcuts", S.create_shortcuts(), [])
         foreign = t / "desktop" / "Other.lnk"
+        # The desktop/ folder only exists because create_shortcuts() made it — which it
+        # correctly does not do on a Mac. Make it here so this fixture does not depend on it.
+        foreign.parent.mkdir(parents=True, exist_ok=True)
         foreign.write_text("not ours")
         autostart[0] = True
         items = {i.key: i for i in U.scan(root / "app" / "config.json")}

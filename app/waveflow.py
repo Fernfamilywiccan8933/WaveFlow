@@ -182,10 +182,21 @@ PRESPEECH_GRACE_S = 20.0
 PHRASE_PAUSE_S = 1.3       # pause this long -> commit+type the phrase, keep listening
 CHROMA = [QColor(120, 165, 255), QColor(150, 130, 250), QColor(105, 205, 225)]
 
-APP_DIR = Path(sys.executable).parent if getattr(sys, "frozen", False) \
-    else Path(__file__).resolve().parent
+# Asked of setup_logic, not recomputed here. This file used to derive the folder itself, from
+# sys.executable — the same rule setup_logic had, written a second time. So when a frozen Mac app
+# needed its data OUT of the bundle, fixing one copy would have left the other still writing the
+# log and config inside WaveFlow.app. One definition, used by both.
+import setup_logic as _paths  # noqa: E402
+
+APP_DIR = _paths.app_dir()
+_LOG_DIR = _paths.log_dir()
+for _d in (APP_DIR, _LOG_DIR):
+    try:
+        _d.mkdir(parents=True, exist_ok=True)   # ~/Library/... may not exist on first launch
+    except OSError:
+        pass
 log = logging.getLogger("waveflow")
-logging.basicConfig(filename=str(APP_DIR / "waveflow.log"), level=logging.INFO,
+logging.basicConfig(filename=str(_LOG_DIR / "waveflow.log"), level=logging.INFO,
                     format="%(asctime)s %(levelname)s %(message)s")
 
 CONFIG_PATH = APP_DIR / "config.json"
@@ -2426,7 +2437,47 @@ def _mic_check(device) -> int:
     return 1
 
 
+def serve_main(argv: list[str]) -> int:
+    """`WaveFlow --serve …` — run the speech engine in THIS process, instead of the app.
+
+    Why the app re-enters itself: a frozen build has no Python interpreter to hand a script to.
+    `sys.executable` IS WaveFlow.exe (or WaveFlow.app/Contents/MacOS/WaveFlow), so the old command
+    `[sys.executable, "server/parakeet_server.py", …]` launched a second copy of the GUI with a
+    meaningless argument — and the script was not even in the bundle. local_engine refused
+    outright in a frozen build as a result, so the README's easiest setup ("This PC — background
+    app") did not work in the one build most people would download. Found on a Mac 2026-09-16;
+    identical on Windows.
+
+    The server's own argparse reads sys.argv, so this only has to point argv at the engine's
+    arguments and call its main(). Nothing about the server changes.
+    """
+    here = Path(__file__).resolve().parent
+    for cand in (here.parent / "server", here / "server", here):
+        if (cand / "parakeet_server.py").exists() or cand == here:
+            sys.path.insert(0, str(cand))
+            break
+    sys.argv = ["parakeet_server", *argv]
+    # vocab.py looks for vocab.user.json NEXT TO ITSELF. In a frozen build "itself" is inside
+    # PyInstaller's unpack folder, which is a fresh temp directory on every launch — so a user's
+    # vocabulary could never be found, and anything written there would vanish. Point it at the
+    # app data folder instead, unless the user already chose a path.
+    if getattr(sys, "frozen", False) and not os.environ.get("WAVEFLOW_VOCAB"):
+        try:
+            import setup_logic
+            os.environ["WAVEFLOW_VOCAB"] = str(setup_logic.app_data() / "vocab.user.json")
+        except Exception:
+            pass
+    import parakeet_server
+    parakeet_server.main()
+    return 0
+
+
 def main() -> int:
+    # Engine mode FIRST: before argparse (which would reject the server's flags), before the
+    # detach-from-terminal relaunch, and before any QApplication exists. An engine process must
+    # never open a window, register a hotkey, or start a second tray icon.
+    if sys.argv[1:2] == ["--serve"]:
+        return serve_main(sys.argv[2:])
     ap = argparse.ArgumentParser()
     ap.add_argument("--url", default="",
                     help="STT server URL; empty = use config.json (default http://127.0.0.1:8756)")

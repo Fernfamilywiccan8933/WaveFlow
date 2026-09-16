@@ -60,6 +60,27 @@ def main() -> int:
         *[a for m in ("osbridge", "osbridge.win", "osbridge.mac", "osbridge.posix")
           for a in ("--hidden-import", m)],
         "--add-data", f"{HERE / 'assets'}{SEP}assets",
+        # --- the ENGINE, so the app can run it itself (`WaveFlow --serve …`) ---------------
+        # Without these the frozen build had no engine at all, and "This PC — background app"
+        # — the setup the README calls easiest — refused to start in the build people download.
+        # The server is imported only in serve mode, so PyInstaller's scan never saw any of it.
+        "--paths", str(ROOT / "server"),
+        # Project hooks override PyInstaller's stock ones. Needed because webrtcvad is installed
+        # as the `webrtcvad-wheels` distribution, and the stock hook's metadata lookup by the
+        # name `webrtcvad` crashed the build. See app/pyinstaller_hooks/.
+        "--additional-hooks-dir", str(HERE / "pyinstaller_hooks"),
+        *[a for m in ("parakeet_server", "itn", "vocab", "webrtcvad", "onnx_asr")
+          for a in ("--hidden-import", m)],
+        "--collect-all", "onnx_asr",       # ships its own model configs and tokenizer data
+        "--collect-all", "onnxruntime",    # native providers are not found by the import scan
+        "--collect-submodules", "uvicorn", # picks its loop/protocol implementations by name
+        "--collect-submodules", "fastapi",
+        # No vocab file is bundled: the engine ships no built-in terms, and a user's own
+        # vocab.user.json is personal. serve_main() points the engine at the app data folder.
+        # NeMo and torch are several GB and only ever used through Docker. Excluded explicitly so
+        # that installing them into the build venv later cannot silently balloon the app.
+        *[a for m in ("torch", "nemo", "nemo_toolkit", "pytorch_lightning", "lightning")
+          for a in ("--exclude-module", m)],
     ]
     if IS_MAC:
         # The usage strings this bundle cannot record without are in MAC_PLIST, applied by
