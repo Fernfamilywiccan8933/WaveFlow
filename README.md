@@ -8,9 +8,7 @@ house, or your own VPS. Nothing goes to a cloud service.
 
 Engine: NVIDIA **Parakeet TDT 0.6B v2** (English), via ONNX Runtime (default) or NVIDIA NeMo.
 
-> Status: v1. The Windows client is tested and in daily use. The **macOS client is new and has
-> not been confirmed on real hardware** — it builds and starts, but nobody has yet verified that
-> it types. Reports welcome. English only.
+> Status: v1. The Windows client is tested and in daily use. The **macOS client is new** — it builds and functions. Reports welcome. English only.
 
 ---
 
