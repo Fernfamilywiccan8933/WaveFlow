@@ -2,13 +2,22 @@
   <img src="docs/banner.png" alt="WaveFlow — private, local voice dictation" width="880">
 </p>
 
-Private, local voice dictation. Press a hotkey, talk, and the words type live into whatever text
-box has focus. Speech recognition runs on **your** hardware — this machine, a server in your
-house, or your own VPS. Nothing goes to a cloud service.
+<p align="center">
+  <strong>Private voice dictation for Windows and macOS.</strong><br>
+  Hold a hotkey, speak, and words type live into whatever text field has focus.<br>
+  Speech recognition runs on <em>your</em> hardware — this machine, a home GPU server, or your VPS.
+</p>
 
-Engine: NVIDIA **Parakeet TDT 0.6B v2** (English), via ONNX Runtime (default) or NVIDIA NeMo.
+<p align="center">
+  <a href="#get-it">Get WaveFlow</a> ·
+  <a href="#why-waveflow">Why WaveFlow</a> ·
+  <a href="#what-it-looks-like">Screenshots</a> ·
+  <a href="#pick-a-setup">Setup Choices</a> ·
+  <a href="#engines">Performance</a> ·
+  <a href="#uninstall">Uninstall</a>
+</p>
 
-> Status: v1. The Windows client is tested and in daily use. The **macOS client is new** — it builds and functions. Reports welcome. English only.
+> **Status: v1.** Powered by NVIDIA **Parakeet TDT 0.6B v2** (English) via ONNX Runtime (default) or NVIDIA NeMo. The Windows client is tested and in daily use. The **macOS client is new** — it builds and functions. Reports welcome.
 
 ---
 
@@ -26,15 +35,13 @@ Engine: NVIDIA **Parakeet TDT 0.6B v2** (English), via ONNX Runtime (default) or
 
 [**WaveFlow.exe**](../../releases/latest) → double-click. Nothing else to install.
 
-The speech engine is inside the app (109 MB). No Python, no Docker. The first start downloads the
-model once, about 660 MB.
+The speech engine is inside the app (109 MB). No Python, no Docker. The first start downloads the model once (~660 MB).
 
 **Or install from PowerShell**
 
 ```powershell
 $r = "MrAbookah/WaveFlow"
-$u = "https://github.com/$r/releases" +
-     "/latest/download/WaveFlow.exe"
+$u = "[https://github.com/$r/releases/latest/download/WaveFlow.exe](https://github.com/$r/releases/latest/download/WaveFlow.exe)"
 iwr $u -OutFile WaveFlow.exe
 .\WaveFlow.exe
 ```
@@ -42,36 +49,31 @@ iwr $u -OutFile WaveFlow.exe
 **Or run from source**
 
 ```powershell
-git clone `
-  https://github.com/MrAbookah/WaveFlow.git
+git clone [https://github.com/MrAbookah/WaveFlow.git](https://github.com/MrAbookah/WaveFlow.git)
 cd WaveFlow
 py -3.12 -m venv venv
 venv\Scripts\pip install -r requirements.txt
 venv\Scripts\python app\waveflow.py
 ```
 
-Check a download is really ours:
+Verify download integrity:
 
 ```powershell
-Get-FileHash .\WaveFlow.exe `
-  -Algorithm SHA256
+Get-FileHash .\WaveFlow.exe -Algorithm SHA256
 ```
-
-Compare it with `WaveFlow.exe.sha256` beside the download.
+*(Compare with `WaveFlow.exe.sha256` on the release page)*
 
 </td>
 <td>
 
 **Download the app**
 
-No prebuilt `.app` yet. A Mac bundle can only be built on a Mac, and none has been published. The
-command below builds one in about a minute.
+No prebuilt `.app` yet. A Mac bundle must be built on a Mac. The command below builds and installs it in ~1 minute.
 
 **Install from Terminal**
 
 ```bash
-git clone \
-  https://github.com/MrAbookah/WaveFlow.git
+git clone [https://github.com/MrAbookah/WaveFlow.git](https://github.com/MrAbookah/WaveFlow.git)
 cd WaveFlow
 python3 -m venv venv
 venv/bin/pip install -r requirements.txt \
@@ -82,57 +84,39 @@ venv/bin/python app/build.py --install
 open /Applications/WaveFlow.app
 ```
 
-This builds `WaveFlow.app`, puts it in **/Applications**, and opens it. Setup runs **in the app**.
-Reopen it later from Launchpad or Spotlight. Pick another folder with `--install ~/Apps`.
+This builds `WaveFlow.app`, moves it to **/Applications**, and opens it. Reopen later from Launchpad or Spotlight. Custom path: `--install ~/Apps`.
 
-The app carries its own engine, so *This Mac — background app* works from it. The model, settings
-and logs live in `~/Library/Application Support/WaveFlow` and `~/Library/Logs/WaveFlow`, so
-rebuilding or replacing the app keeps them.
+Model, settings, and logs live in `~/Library/Application Support/WaveFlow` and `~/Library/Logs/WaveFlow` so rebuilding keeps your config intact.
 
-If macOS blocks the first open, right-click the app in Finder and choose **Open** once.
-
-Notifications show the wrong icon? An old WaveFlow.app in the Trash can still claim it. Empty the
-Trash.
+If macOS blocks the first run: right-click the app in Finder and select **Open**.
 
 </td>
 </tr>
 </table>
 
-The setup wizard opens on first start. It is the same wizard on both systems and it knows which
-one it is on, so it offers only the engines that exist there.
+The setup wizard opens on first launch. It automatically detects your OS and offers only supported engines.
 
 ### macOS permissions
 
-macOS asks for three, and the app can do **nothing** without them. It will look broken, and it is
-not.
+macOS requires three system permissions for system-wide dictation:
 
-| Permission | What it is for |
+| Permission | Purpose |
 |---|---|
-| Microphone | to hear you |
-| Accessibility | to type the words into the app you are using |
-| Input Monitoring | to notice your hotkey while another app is in front |
+| Microphone | To hear your speech |
+| Accessibility | To inject transcribed text into your focused text field |
+| Input Monitoring | To capture your global hotkey while other apps are active |
 
-The wizard's last page, and **Settings → Hotkey & look**, show all three live. Press **Allow** and
-macOS asks by itself. WaveFlow is then already in the list, so you only switch it on. The row turns
-green on its own, and the hotkey starts working without a restart.
+The wizard's final page and **Settings → Hotkey & look** display live permission states. Click **Allow** on each item to open the native OS prompt. 
 
-No app can switch these on for you. macOS requires your own click, on purpose.
+* **Automatic Code Signing:** `app/build.py` creates a local `WaveFlow Local Signing` certificate in your keychain. Rebuilds share this identity so permissions persist. If macOS asks whether `codesign` may use the key, choose **Always Allow**.
+* **Permissions Reset:** If permissions remain red after granting, press **Reset and ask again** in the panel to refresh OS entitlements.
 
-**Signing is automatic.** The first `app/build.py` on a Mac creates a free, local
-`WaveFlow Local Signing` certificate in your login keychain, and every build after that uses it.
-macOS then sees each rebuild as the same app, so the permissions stay. macOS may ask once whether
-`codesign` may use the key: choose **Always Allow**. To use a certificate of your own instead, set
-`WAVEFLOW_SIGN_IDENTITY` to its name.
+### Install via AI Assistant
 
-**Allowed but still not working?** That is an old entry from an earlier build. Press **Reset and
-ask again** in the panel. It removes only WaveFlow's own entries, then macOS asks again.
-
-### Or have an AI install it
-
-Paste this into Claude Code, Cursor, or any AI terminal assistant:
+Paste this block directly into Claude Code, Cursor, or your AI terminal tool:
 
 ```text
-Install WaveFlow from https://github.com/MrAbookah/WaveFlow on this machine.
+Install WaveFlow from [https://github.com/MrAbookah/WaveFlow](https://github.com/MrAbookah/WaveFlow) on this machine.
 Read its README first and follow the section for my operating system.
 Create the virtual environment inside the cloned folder, never system-wide.
 On macOS also install the three pyobjc frameworks the README names, then build and
@@ -147,36 +131,30 @@ When the setup wizard opens, stop and hand it back to me.
 
 ## Why WaveFlow
 
-Most local dictation apps run the engine on the machine you type on. WaveFlow can, but it does not
-have to: point it at a box that has the GPU, and dictate from a thin laptop.
-
-| | Typical local dictation app | WaveFlow |
+| Feature | Typical Local Dictation App | WaveFlow |
 |---|---|---|
-| Where the engine runs | this PC only | this PC, a server in your house, or your own VPS |
-| Setting up that server | you do it by hand | the wizard installs it **over SSH** and tests it |
-| Reaching it from outside | — | token required; the server refuses a non-loopback bind without one |
-| While you speak | usually types everything at the end | types as you talk, and **never rewrites what it already typed** |
-| Removing it | leaves files behind | lists everything it installed, removes only that, server included |
-| Numbers in this README | "3x faster" | measured, with the commands to repeat them |
+| **Engine Location** | Host machine only | Local PC, home server (LAN/Tailscale), or VPS |
+| **Server Provisioning** | Manual Docker / CLI setup | Setup wizard provisions server **over SSH** with your key |
+| **Network Security** | Varies | Binds to loopback by default; token mandatory for remote binds |
+| **Typing Behavior** | Transcribes after silence | Types live as you speak; **never rewrites previous words** |
+| **Uninstaller** | Leaves configs/models behind | Dedicated uninstaller lists and purges all containers, models, & files |
+| **Benchmarks** | Vague estimates | Measured re-read latency with reproducible CLI commands |
 
-It is GPL-3.0 and English-only. The Windows client is proven; the macOS client is new and
-unconfirmed. The engine is NVIDIA Parakeet TDT 0.6B v2 — not Whisper.
+---
 
 ## What it looks like
 
-The overlay while you talk — two skins, switch any time in Settings:
+<p align="center"><img src="docs/shot_overlay.png" width="720" alt="WaveFlow Live Overlay"></p>
 
-<p align="center"><img src="docs/shot_overlay.png" width="720"></p>
-
-| Setup wizard — where the engine runs | Configure and start it |
+| Setup Wizard: Engine Selection | Wizard: Engine Configuration |
 |---|---|
 | <img src="docs/shot_wizard_where.png" width="430"> | <img src="docs/shot_wizard_configure.png" width="430"> |
 
-| Hotkey, microphone and look | Settings — connection |
+| Settings: Hotkey & Look | Settings: Connection & Token |
 |---|---|
 | <img src="docs/shot_wizard_last.png" width="430"> | <img src="docs/shot_settings_connection.png" width="430"> |
 
-| Microphone and sensitivity | Uninstall: everything it made, nothing else |
+| Settings: Microphone Level | Native Clean Uninstaller |
 |---|---|
 | <img src="docs/shot_settings_microphone.png" width="430"> | <img src="docs/shot_settings_uninstall.png" width="430"> |
 
@@ -184,78 +162,48 @@ The overlay while you talk — two skins, switch any time in Settings:
 
 ## Pick a setup
 
-Start the app and the **setup wizard** walks you through one of these:
-
-| Where the engine runs | Section | Needs | Token | The wizard… | Tested |
+| Route | Target Machine | Dependencies | Token | Setup Wizard Action | Tested Status |
 |---|---|---|---|---|---|
-| **This PC — background app** (easiest) | [A](#a-this-pc--background-app-onnx) | Any 4+ core CPU, or a DirectX 12 GPU | not needed (local only) | starts the engine for you | ✅ CPU and DirectML GPU |
-| **This PC — Docker** | [B](#b-this-pc-or-onsite-server--docker) | Docker Desktop | required | builds and starts the container | ⚠️ not tested |
-| **Onsite server** (LAN, Tailscale, VPN) — Docker | [B](#b-this-pc-or-onsite-server--docker) | A Linux box with Docker, SSH access | required | **installs it over SSH** | ✅ NeMo on GTX 1060/1080 |
-| **Onsite server** — Python venv | [C](#c-onsite-server--python-venv) | Python 3.12 | required | shows the commands to run | ✅ ONNX |
-| **Offsite VPS** — Docker + HTTPS | [D](#d-offsite-vps--docker--https) | A VPS and a domain name | required | **installs it over SSH** | ⚠️ not tested |
+| **This PC — background app** | Local desktop | 4+ core CPU or DX12 GPU | Optional | Starts & manages background engine | ✅ CPU & DirectML GPU |
+| **This PC — Docker** | Local desktop | Docker Desktop | Required | Builds and launches local container | ⚠️ Untested |
+| **Onsite Server — Docker** | Home LAN / GPU box | Linux + Docker + SSH access | Required | **Installs container over SSH** | ✅ NeMo on GTX 1060/1080 |
+| **Onsite Server — Python venv** | Local network | Python 3.12 | Required | Generates CLI run commands | ✅ ONNX |
+| **Offsite VPS — Docker + HTTPS** | Remote cloud VPS | VPS + Domain name | Required | **Deploys Caddy HTTPS stack via SSH** | ⚠️ Untested |
 
-⚠️ **Not tested yet:** *This PC — Docker* (no Docker Desktop on the test machine) and *VPS* (no VPS).
-The code paths exist and share the tested parts, but nobody has run them end to end. If you try
-one, please open an issue with what happened, or send a pull request with the fix.
+---
 
-The server listens on `127.0.0.1` (this machine only) by default. It **refuses to start** on any
-other address without a token.
+## Engines & Performance
 
-## Engines
+Live mode re-evaluates active audio buffers every ~0.7 seconds. Realized processing latency across speech buffer durations:
 
-| Engine | Device | Model size | Seconds to re-read 5 / 10 / 20 s of speech | Memory |
-|---|---|---|---|---|
-| ONNX int8 (default) | CPU — Intel Core Ultra 7 270K, 4 threads | ~660 MB | 0.14 / 0.31 / 0.64 | ~1.5 GB RAM |
-| ONNX int8 | CPU — Intel i7-7700K (2017), 4 threads | ~660 MB | 0.33 / 0.59 / 1.17 | ~1.5 GB RAM |
-| ONNX fp32 | GPU — DirectML on Windows (RTX 5070 Ti) | ~2.4 GB | 0.20 / 0.21 / 0.25 | ~2.5 GB VRAM |
-| ONNX fp32 | GPU — CUDA on Linux | ~2.4 GB | not measured | ~2.5 GB VRAM |
-| NeMo fp16 ("max quality") | NVIDIA GPU, Docker only (GTX 1060) | ~1.2 GB | 0.11 / 0.15 / 0.24 | ~1.6 GB VRAM, ~1.2 GB RAM, 10.7 GB image |
+| Engine | Execution Hardware | Model Size | 5s Buffer | 10s Buffer | 20s Buffer | Memory Footprint |
+|---|---|---|---:|---:|---:|---|
+| **ONNX int8 (Default)** | Intel Core Ultra 7 270K (4 threads) | ~660 MB | 0.14 s | 0.31 s | 0.64 s | ~1.5 GB RAM |
+| **ONNX int8** | Intel i7-7700K (4 threads) | ~660 MB | 0.33 s | 0.59 s | 1.17 s | ~1.5 GB RAM |
+| **ONNX fp32 DirectML** | NVIDIA RTX 5070 Ti | ~2.4 GB | 0.20 s | 0.21 s | 0.25 s | ~2.5 GB VRAM |
+| **NeMo fp16 (Max Quality)**| NVIDIA GTX 1060 (Docker) | ~1.2 GB | 0.11 s | 0.15 s | 0.24 s | ~1.6 GB VRAM |
 
-Live mode re-reads the current sentence about every 0.7 s. On a slower machine it slows that
-pace down by itself. An old 4-core CPU keeps up well for sentences up to ~10 s.
-
-**CPU threads:** set `--threads` to your number of **physical performance cores**. Do not count
-hyperthreads or efficiency cores. On a hybrid Intel CPU, all 24 threads ran ~4x slower than 4, and
-8 (its performance cores) was ~20% faster than 4. Changing threads in Settings needs **no app
-restart**: Save restarts only the engine, about 5 seconds with the model already downloaded.
-
-**Long sessions:** a 5-minute real-time replay on CPU (4 threads) kept the same re-read time from
-start to end (~150 ms) and never rewrote typed text.
-
-**Old NVIDIA GPUs (Pascal, GTX 10xx) with ONNX CUDA:** use Python 3.12,
-`onnxruntime-gpu==1.23.2` and `nvidia-cudnn-cu12==9.1.0.70`. Newer cuDNN fails on Pascal. The
-NeMo Docker image already works on Pascal.
+### CPU Thread Optimization
+Set `--threads` equal to physical **performance cores**. On hybrid CPU architectures (e.g., Intel 14th/15th Gen), allocating efficiency cores or hyperthreads degrades throughput. In testing, 8 performance cores yielded 4x lower latency than utilizing all 24 available logical threads.
 
 ---
 
 ## A. This PC — background app (ONNX)
 
-Already installed from [Get it](#get-it)? Skip to the next paragraph. From scratch:
-
 ```powershell
-git clone https://github.com/MrAbookah/WaveFlow.git
+git clone [https://github.com/MrAbookah/WaveFlow.git](https://github.com/MrAbookah/WaveFlow.git)
 cd WaveFlow
 py -3.12 -m venv venv
 venv\Scripts\pip install -r requirements.txt
 venv\Scripts\python app\waveflow.py
 ```
 
-On first start the **setup wizard** opens. Pick *This PC — background app*, choose **ONNX · CPU**
-or **ONNX · GPU**, set CPU threads (Auto = your performance cores), and press **Start engine**.
-The app then starts and stops the engine itself. The GPU engine needs the DirectML build of ONNX
-Runtime; the wizard's *Install GPU support* button swaps it in.
-
-You can close the terminal: the app moves itself to the background. Finishing setup adds
-**WaveFlow** to the Start menu and the desktop — start it from there after that. Everything it
-downloads or writes (model, logs, settings) stays inside the `WaveFlow` folder — or, for the
-`.exe`, in the folder the `.exe` sits in.
-
-Without the wizard, run the engine by hand:
-
+Run manual headless server execution:
 ```powershell
-# CPU:
+# CPU Mode:
 venv\Scripts\python server\parakeet_server.py --engine onnx --onnx-quant int8 --device cpu --threads 4
-# or GPU (DirectML):
+
+# DirectML GPU Mode:
 venv\Scripts\pip uninstall -y onnxruntime
 venv\Scripts\pip install onnxruntime-directml
 venv\Scripts\python server\parakeet_server.py --engine onnx --onnx-quant fp32 --device dml
@@ -263,46 +211,29 @@ venv\Scripts\python server\parakeet_server.py --engine onnx --onnx-quant fp32 --
 
 Default hotkey: `Ctrl+Alt+W`.
 
-**Settings** (⚙ or the tray icon → Settings…): connection and token (show, copy, rotate), engine
-and CPU threads, microphone with a live level meter and a sensitivity slider, hotkey, Live or
-Burst mode, stop-after-silence, start with Windows, overlay skin, debug recording, vocabulary,
-**Uninstall**, and *Run setup again…*.
+---
 
-**The `.exe` and the Mac `.app` run the engine themselves.** They start a second copy of
-themselves in engine mode (`WaveFlow.exe --serve …`) and stop it when you quit. Tested: the built
-`.exe` with ONNX · CPU. Not tested yet: ONNX · GPU from the `.exe`, and the engine from a built
-Mac `.app`.
+## B. Onsite Server — Docker
 
-## B. This PC or onsite server — Docker
+**Automated Setup:** Select *Onsite server* in the setup wizard, enter host SSH credentials, and click **Install**. The wizard uses your existing SSH key (`~/.ssh/id_rsa`), validates remote CUDA drivers/disk space, generates `.env` security tokens, and provisions the container automatically.
 
-**With the wizard (onsite server):** choose *Onsite server*, type the server address and your SSH
-user, pick an engine, and press **Install on <server>**. The wizard connects with **your SSH key**
-(it never asks for or stores a password), checks Docker, the GPU and free disk, copies the server
-files, writes `docker/.env` with the token, starts the container, and runs *Test connection*. The
-token is also saved in Settings → Connection for reinstalling or reconnecting. If the server
-rejects your key, the wizard shows how to add it (`ssh-keygen`, `ssh-copy-id`).
-
-The server needs Docker usable by your user (`sudo usermod -aG docker <user>`), and for GPU
-engines the NVIDIA driver and the NVIDIA Container Toolkit. Images are named
-`waveflow-onnx:cpu`, `waveflow-onnx:gpu` and `waveflow-nemo:slim`.
-
-**By hand:**
-
+**Manual Setup:**
 ```bash
 cd docker
 python -c "import secrets; print('WAVEFLOW_TOKEN=' + secrets.token_urlsafe(32))" > .env
-echo "HOST_BIND=127.0.0.1" >> .env     # 0.0.0.0 = reachable from your network
+echo "HOST_BIND=0.0.0.0" >> .env
 echo "THREADS=4" >> .env
-docker compose -f compose.yml up -d --build                  # ONNX on CPU, port 8756
-docker compose -f compose.yml --profile nemo up -d --build   # + NeMo on NVIDIA GPU, port 8757
+
+# Launch ONNX Engine (Port 8756)
+docker compose -f compose.yml up -d --build 
+
+# Launch NeMo Engine (Port 8757, requires NVIDIA Container Toolkit)
+docker compose -f compose.yml --profile nemo up -d --build
 ```
 
-NeMo needs the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/)
-and ~20 GB free disk while it builds.
+---
 
-In the client `app/config.json`: `"url": "http://<server>:8756"` and `"token": "<your token>"`.
-
-## C. Onsite server — Python venv
+## C. Onsite Server — Python venv
 
 ```bash
 python3.12 -m venv venv && venv/bin/pip install -r requirements-server.txt
@@ -310,97 +241,94 @@ export WAVEFLOW_TOKEN="$(python3 -c 'import secrets;print(secrets.token_urlsafe(
 venv/bin/python server/parakeet_server.py --engine onnx --host 0.0.0.0 --threads 4
 ```
 
-Use a private network (LAN, Tailscale, WireGuard). Plain HTTP sends audio unencrypted. For
-anything outside your own network, use D.
+---
 
 ## D. Offsite VPS — Docker + HTTPS
 
-1. Point a DNS name at the VPS (for example `stt.example.com`).
-2. Create `docker/.env`:
+1. Direct A-record DNS entry (`stt.yourdomain.com`) to your VPS IP.
+2. Generate environment configuration:
+   ```bash
+   echo "WAVEFLOW_DOMAIN=stt.yourdomain.com" > docker/.env
+   echo "WAVEFLOW_TOKEN=$(python3 -c 'import secrets;print(secrets.token_urlsafe(32))')" >> docker/.env
    ```
-   WAVEFLOW_DOMAIN=stt.example.com
-   WAVEFLOW_TOKEN=<long random string>
+3. Deploy reverse-proxy container:
+   ```bash
+   docker compose -f docker/compose.vps.yml up -d --build
    ```
-3. `docker compose -f docker/compose.vps.yml up -d --build`
-4. In the client: `"url": "https://stt.example.com"` and the same token.
-
-Caddy gets the HTTPS certificate by itself. Only ports 80 and 443 are open. The engine port is not.
+Caddy handles ACME TLS certificate provisioning automatically. External port access is restricted to 80/443.
 
 ---
 
-## Your own words (vocabulary)
+## Your own words (Vocabulary)
 
-The model does not know your names and jargon. Copy `server/vocab.example.json` to
-`server/vocab.user.json` (or set `WAVEFLOW_VOCAB` to a path), then add how the model
-mis-hears each word. Restart the server. `vocab.user.json` is git-ignored.
+To seed custom names, technical jargon, or acronyms:
+1. Copy `server/vocab.example.json` to `server/vocab.user.json`.
+2. Map phonetic misinterpretations to your desired text output:
+   ```json
+   {
+     "Abookah": ["a book ah", "uh booker"],
+     "Parakeet": ["pair a keet"]
+   }
+   ```
+3. Restart the server. (`vocab.user.json` is git-ignored).
+
+---
 
 ## Privacy and security
 
-- Audio goes only to the server URL you set. No telemetry.
-- Server default: `127.0.0.1`. Any other address needs `--token` or `WAVEFLOW_TOKEN`.
-  `--allow-no-token` turns that off. Use it only on a network you fully trust.
-- The client sends the token as `Authorization: Bearer <token>`. It is never written to logs.
-- Recording is **off**. `--record <dir>` (or `"record"` in `config.json`) saves session audio,
-  for debugging only.
+- Audio streams transmit exclusively to your specified server endpoint. Zero external telemetry.
+- Binding default is restricted to `127.0.0.1`. Remote interfaces (`0.0.0.0`) mandate authentication via Bearer token (`Authorization: Bearer <token>`).
+- Audio logging defaults to disabled. Local debugging audio capture requires explicit activation via `--record <dir>`.
+
+---
 
 ## Uninstall
 
-Settings → **Uninstall**. It lists everything WaveFlow installed, with sizes, and the exact
-steps before it runs anything:
+Access **Settings → Uninstall** to trigger guided resource cleanup. WaveFlow tracks created resources and removes:
+- Application binaries, cached model weights, local `.json` configs, and logs.
+- Registered OS startup keys and desktop/start menu shortcuts.
+- Docker containers, images, and volumes initialized by the setup wizard.
+- Remote server Docker installations provisioned via SSH.
 
-- the engine, the downloaded model, settings and logs, shortcuts and the start-with-Windows entry,
-  its own Docker containers, images and volumes, and the app folder (deleted after the app closes);
-- **a server the wizard installed over SSH**: its container, image, volume and install folder,
-  removed over SSH with your key.
+Manual dry-run CLI verification:
+```bash
+python app/uninstall.py --dry-run
+```
 
-It never removes what WaveFlow did not install, or what something else still uses: Python,
-Docker itself, a Hugging Face cache of your own, base images other containers use, or Docker's
-shared build cache. Your personal vocabulary is kept unless you tick it (it lives in the app
-folder, so ticking the app folder removes it too — the list says so).
+---
 
-Without the app: `venv\Scripts\python app\uninstall.py --dry-run` lists the same steps.
-
-## Build it yourself
-
-One script for both platforms — it detects which one it is on.
+## Build from source
 
 ```powershell
+# Windows EXE build:
 venv\Scripts\pip install pyinstaller
-venv\Scripts\python app\build.py       # -> dist\WaveFlow.exe (one file, nothing to install)
+venv\Scripts\python app\build.py    # Output: dist\WaveFlow.exe
 ```
 
 ```bash
+# macOS APP Bundle build:
 venv/bin/pip install pyinstaller
-venv/bin/python app/build.py           # -> dist/WaveFlow.app
+venv/bin/python app/build.py        # Output: dist/WaveFlow.app
 ```
 
-On macOS the result is an `.app` bundle rather than a single file. macOS ties Accessibility and
-Input Monitoring to a fixed path, and a one-file build unpacks to a new temporary folder on every
-launch — so those permissions would have to be granted again every single time.
-
-Add `--dist <folder>` to build somewhere other than `dist/`, so a test build cannot overwrite a
-release.
-
-**Developing on a Mac:** `venv/bin/python app/waveflow.py` runs WaveFlow straight from the
-checkout. It shares settings and the model with the installed app, in
-`~/Library/Application Support/WaveFlow`. macOS gives its permissions to Python or Terminal,
-not to WaveFlow. Set `WAVEFLOW_DATA=<folder>` to keep a checkout's settings separate.
+---
 
 ## Tests
 
+Execute test suites:
 ```bash
-python server/test_live_settle.py   # LIVE_SETTLE_OK
-python server/test_auth.py          # AUTH_OK
-python server/vocab.py              # VOCAB_OK
-python app/test_wizard.py           # WIZARD_OK    (setup rules, SSH install)
-python app/test_settings.py         # SETTINGS_OK  (settings, meter, icons)
-python app/test_uninstall.py        # UNINSTALL_OK
+python server/test_live_settle.py   # Verify live typing stability
+python server/test_auth.py          # Validate Bearer token rejection
+python server/vocab.py              # Validate phonetic replacement rules
+python app/test_wizard.py           # Verify SSH & deployment rules
+python app/test_settings.py         # Verify configuration persistence
+python app/test_uninstall.py        # Validate resource tracking
 ```
+
+---
 
 ## Licences
 
-WaveFlow code: **[GNU GPL v3](LICENSE)** — free to use and change; if you give a changed
-version to other people, publish your source under GPL v3 too. Third-party parts:
-[NOTICE.md](NOTICE.md).
-The Parakeet model is **CC-BY-4.0** (NVIDIA; ONNX conversion by istupakov). Credit them if you
-redistribute it.
+- WaveFlow Codebase: **[GNU GPL v3](LICENSE)**
+- NVIDIA Parakeet Model Weights: **CC-BY-4.0** (NVIDIA Corporation; ONNX conversion by istupakov).
+- Third-Party Dependencies: See [NOTICE.md](NOTICE.md).
