@@ -395,6 +395,23 @@ def make_frameless(win_id: int) -> None:
     return None
 
 
+def order_front_without_focus(win_id: int) -> bool:
+    """Put the pill on top WITHOUT activating WaveFlow. Always True: the caller must never fall back
+    to Qt's raise_() here, because on Cocoa raise_() activates the whole app — measured on a Mac
+    2026-09-16, the frontmost app switched to WaveFlow and the user's text box lost focus on every
+    summon, despite WindowDoesNotAcceptFocus. orderFrontRegardless() changes z-order only."""
+    if not win_id:
+        return True
+    try:
+        import objc
+        window = objc.objc_object(c_void_p=win_id).window()
+        if window is not None:
+            window.orderFrontRegardless()
+    except Exception:
+        pass                      # the stay-on-top flag still keeps it above; focus is untouched
+    return True
+
+
 def enable_glass(win_id: int, theme: str = "dark") -> bool:
     """NSVisualEffectView behind the pill.
 

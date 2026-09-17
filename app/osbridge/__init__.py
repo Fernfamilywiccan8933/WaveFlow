@@ -148,6 +148,12 @@ def set_hotkey_callback(on_pressed) -> None:
 
 
 # ---------------------------------------------------------------- the glass pill
+def order_front_without_focus(win_id: int) -> bool:
+    """Bring a floating window to the top without taking focus from the user's app. False means
+    "not handled here": the caller may use Qt's raise_(), which does not activate on Windows."""
+    return _impl.order_front_without_focus(win_id)
+
+
 def make_frameless(win_id: int) -> None:
     """Remove any frame or border the OS would draw on its own."""
     _impl.make_frameless(win_id)

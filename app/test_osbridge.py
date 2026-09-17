@@ -48,6 +48,7 @@ CONTRACT = {
     "needs_native_filter": [],
     "set_hotkey_callback": ["on_pressed"],
     "make_frameless": ["win_id"],
+    "order_front_without_focus": ["win_id"],
     "enable_glass": ["win_id", "theme"],
     "os_theme": [],
     "app_data_dir": [],
@@ -348,6 +349,39 @@ try:
     check("not repeated on every partial", len(a.error_sig.msgs), 1)
 finally:
     osbridge.can_type, osbridge.foreground_window = _real_can, _real_fg
+
+# --- summoning the pill must never take focus from the user's text box (Mac, 2026-09-16) ---------
+check("mac never hands back to Qt's activating raise_()", mac.order_front_without_focus(1234), True)
+check("windows keeps its (non-activating) raise_()", win.order_front_without_focus(0), False)
+
+
+class _Pill:
+    def __init__(self):
+        self.calls = []
+
+    def show(self):
+        self.calls.append("show")
+
+    def raise_(self):
+        self.calls.append("raise_")
+
+    def winId(self):
+        return 1234
+
+
+for _label, _ret, _want in (("macOS", True, ["show"]), ("Windows", False, ["show", "raise_"])):
+    _p = _Pill()
+    _real_of = osbridge.order_front_without_focus
+    osbridge.order_front_without_focus = lambda wid, r=_ret: r
+    try:
+        waveflow.WaveFlow._show_pill(_p)
+    finally:
+        osbridge.order_front_without_focus = _real_of
+    check(f"{_label}: pill shown with {_want}", _p.calls, _want)
+_wfs = Path(waveflow.__file__).read_text(encoding="utf-8")
+_body = _wfs[_wfs.index("class WaveFlow(QWidget)"):]
+_raises = [i for i in range(len(_body)) if _body.startswith("self.raise_()", i)]
+check("the only raise_() left in the pill class is inside _show_pill's Windows branch", len(_raises), 1)
 
 # --- the pill must survive clicking another app on macOS ------------------------------------------
 _wf = Path(waveflow.__file__).read_text(encoding="utf-8")

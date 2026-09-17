@@ -69,6 +69,10 @@ def set_hotkey_callback(on_pressed) -> None:
     return None
 
 
+def order_front_without_focus(win_id: int) -> bool:
+    return False
+
+
 def make_frameless(win_id: int) -> None:
     return None
 

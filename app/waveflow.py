@@ -1489,8 +1489,7 @@ class WaveFlow(QWidget):
             QTimer.singleShot(900, self.hide_to_tray_if_idle)
         else:
             self._capture_target()   # BEFORE we show (we never steal focus)
-            self.show()
-            self.raise_()
+            self._show_pill()
             self.start_listen()
 
     def hide_to_tray_if_idle(self):
@@ -1518,10 +1517,20 @@ class WaveFlow(QWidget):
             self._apply_cfg(dlg.result_cfg)
 
     # ---- dictation ----
+    def _show_pill(self):
+        """Show the pill on top WITHOUT taking focus from the app being dictated into.
+
+        It used to be show() + raise_(). On macOS raise_() activates the whole app, overriding
+        WindowDoesNotAcceptFocus: every summon took focus from the user's text box (measured on a
+        Mac 2026-09-16 — frontmost app switched to WaveFlow). osbridge orders the window front
+        without activating there; on Windows raise_() never activated, so it stays."""
+        self.show()
+        if not osbridge.order_front_without_focus(int(self.winId())):
+            self.raise_()
+
     def _summon(self):
         self._capture_target()
-        self.show()
-        self.raise_()
+        self._show_pill()
         if self.state == "idle":
             self.toggle_listen()
 
@@ -1534,8 +1543,7 @@ class WaveFlow(QWidget):
     def toggle_listen(self):
         if self.state == "idle":
             if not self.isVisible():
-                self.show()
-                self.raise_()
+                self._show_pill()
             self.start_listen()
         elif self.state == "listening":
             self.finalize()
@@ -1600,8 +1608,7 @@ class WaveFlow(QWidget):
         if self.state == "listening":
             return
         if not self.isVisible():                 # the old close may have hidden it meanwhile
-            self.show()
-            self.raise_()
+            self._show_pill()
         if getattr(self, "_engine_wait_t0", None) is not None and _tries >= 0:
             return                               # already waiting for the engine; one wait only
         if not self._server_up() and self._local_engine_starting():

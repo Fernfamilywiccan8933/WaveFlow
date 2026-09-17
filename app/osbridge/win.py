@@ -101,6 +101,11 @@ def set_hotkey_callback(on_pressed) -> None:
 
 
 # ---------------------------------------------------------------- the glass pill
+def order_front_without_focus(win_id: int) -> bool:
+    return False         # Qt's raise_() is already non-activating here; the caller uses it
+
+
+
 def make_frameless(win_id: int) -> None:
     import waveflow
     waveflow.disable_window_frame(win_id)
