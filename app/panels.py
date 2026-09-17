@@ -47,8 +47,10 @@ class MicPanel(QWidget):
         try:
             devs, _default = devices_fn() if devices_fn else ([], None)
         except Exception:
-            devs = []
-        self.device.addItem("System default", None)
+            devs, _default = [], None
+        # Named, so the row says which mic it will actually save.
+        _def_name = dict(devs).get(_default, "")
+        self.device.addItem(f"System default ({_def_name})" if _def_name else "System default", None)
         seen = set()
         for _idx, name in devs:
             if name not in seen:
@@ -91,7 +93,21 @@ class MicPanel(QWidget):
         return {0: "high", 50: "balanced", 100: "low"}.get(v, v)
 
     def device_name(self):
-        return self.device.currentData()
+        """The mic to SAVE — always a real device name, never None.
+
+        "System default" used to save null, so WaveFlow followed whatever macOS or Windows chose
+        and silently switched mid-day when AirPods or a headset connected (operator, asked more
+        than once: "the microphone being saved has been asked multiple times to be fixed"). The
+        default is resolved to the device it means right now, so the choice sticks.
+        """
+        chosen = self.device.currentData()
+        if chosen:
+            return chosen
+        try:
+            from audio import resolve_device_name
+            return resolve_device_name(None)[1] or None
+        except Exception:
+            return None
 
     def _on_sens(self, value, emit=True):
         self.sens_hint.setText(SENS_HINTS[S.sensitivity_label(value).lower()])

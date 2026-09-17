@@ -148,6 +148,26 @@ w = settings.SettingsWindow(cfg2, None, devices_fn=lambda: ([(1, "Mic A")], 1))
 check("unplugged saved mic stays selected", w.collect()["device_name"], "Old USB Mic")
 w.close()
 
+# --- the chosen mic is SAVED, never left as "whatever the OS picks today" ------------------------
+# Asked for more than once (operator, 2026-09-17). A null device_name let the mic change by itself
+# when AirPods or a headset connected, mid-day, with no sign of it.
+import audio  # noqa: E402
+from unittest import mock as _mock  # noqa: E402
+
+_devs = ([(1, "MacBook Pro Microphone"), (2, "AirPods Pro")], 1)
+with _mock.patch.object(audio, "clean_input_devices", lambda: _devs):
+    w = settings.SettingsWindow({**cfg, "device_name": None}, None, devices_fn=lambda: _devs)
+    check("left on System default: the real device is saved", w.collect()["device_name"],
+          "MacBook Pro Microphone")
+    check("the row says which mic that is",
+          "MacBook Pro Microphone" in w.mic.device.itemText(0), True)
+    w.close()
+    w = settings.SettingsWindow({**cfg, "device_name": "AirPods Pro"}, None, devices_fn=lambda: _devs)
+    check("a named mic is saved unchanged", w.collect()["device_name"], "AirPods Pro")
+    w.close()
+_wiz = (Path(__file__).resolve().parent / "wizard.py").read_text(encoding="utf-8")
+check("the setup wizard saves it the same way", 'out["device_name"] = self.mic.device_name()' in _wiz, True)
+
 if FAILS:
     print("SETTINGS_FAIL\n" + "\n".join(FAILS))
     sys.exit(1)
