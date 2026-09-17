@@ -17,6 +17,11 @@ os.environ["QT_QPA_PLATFORM"] = "offscreen"
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 sys.platform = "darwin"                       # (1) before any app module is imported
+# Importing waveflow creates its config and log folders. As a "Mac" those are ~/Library/..., so
+# without this the harness made a stray C:\Users\<you>\Library on the Windows test box (2026-09-16)
+# and, on a real Mac, wrote into the user's own WaveFlow folders. A throwaway folder instead.
+import tempfile  # noqa: E402
+os.environ["WAVEFLOW_DATA"] = tempfile.mkdtemp(prefix="wf-as-mac-")
 sys.modules.pop("ctypes.wintypes", None)      # (2)
 for attr in ("wintypes", "windll"):
     if hasattr(ctypes, attr):

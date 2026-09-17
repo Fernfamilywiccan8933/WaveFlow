@@ -555,7 +555,7 @@ class SettingsWindow(QDialog):
         row(v, "Save my audio clips", "off by default · for bug reports only", self.record)
         row(v, "Folder", str(S.app_data() / "recordings"))
         logs = QPushButton("Open")
-        logs.clicked.connect(lambda: _open(S.app_dir()))
+        logs.clicked.connect(lambda: _open(S.log_dir()))
         row(v, "Log folder", "waveflow.log", logs)
         v.addStretch(1)
         g.addWidget(f, 0, 0)

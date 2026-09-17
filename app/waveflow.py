@@ -2645,6 +2645,11 @@ def main() -> int:
                 print("  venv/bin/python app/build.py --install")
             return 0
 
+    if not (args.demo or args.replay):
+        # Mac: a setup finished in a source checkout is brought into the one shared folder, once,
+        # BEFORE the config is read — so the installed app does not open the wizard again. Here and
+        # not at import, so a test that imports this module can never move a real model folder.
+        _paths.migrate_mac_settings(log=log.info)
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
     app.setWindowIcon(app_icon())

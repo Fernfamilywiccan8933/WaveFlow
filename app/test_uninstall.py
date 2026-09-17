@@ -39,6 +39,7 @@ with tempfile.TemporaryDirectory() as t:
     with mock.patch.object(S, "ROOT", root), mock.patch.object(U.S, "ROOT", root), \
          mock.patch.object(U, "COMPOSE", root / "docker" / "compose.yml"), \
          mock.patch.object(S, "app_data", lambda: data), mock.patch.object(S, "models_dir", lambda: hf), \
+         mock.patch.object(S, "app_dir", lambda: root / "app"), mock.patch.object(S, "log_dir", lambda: root / "app"), \
          mock.patch.dict(os.environ, {"HF_HOME": str(outside)}), \
          mock.patch.object(U, "_docker_has_ours", lambda: False), \
          mock.patch.object(U, "schedule_folder_delete", lambda f: scheduled.append(f)), \

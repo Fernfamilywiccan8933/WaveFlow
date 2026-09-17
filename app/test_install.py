@@ -108,5 +108,83 @@ with mock.patch.object(build.subprocess, "run", fake_run), mock.patch("shutil.wh
 check("config names the codeSigning extended key usage", "extendedKeyUsage = critical,codeSigning" in build._CERT_CONFIG, True)
 print(f"  (openssl steps ran for real: {HAVE_OPENSSL})")
 
+# --- ONE settings folder per Mac user, and the old two-copy setup migrated (Mac, 2026-09-16) -----
+import json, plistlib
+import setup_logic as S
+
+def mac_world():
+    t = Path(tempfile.mkdtemp())
+    home = t / "home"
+    co = t / "checkout"                                     # the git clone the README makes
+    (co / "app").mkdir(parents=True); (co / "server").mkdir()
+    (co / "app" / "config.json").write_text(json.dumps({"setup_done": True, "hotkey_show": "ctrl+alt+m"}))
+    (co / "data" / "models" / "hub").mkdir(parents=True)
+    (co / "data" / "models" / "hub" / "encoder.onnx").write_bytes(b"0" * 4096)
+    (co / "server" / "vocab.user.json").write_text('{"terms": ["WaveFlow"]}')
+    sup, logs = home / "Library" / "Application Support" / "WaveFlow", home / "Library" / "Logs" / "WaveFlow"
+    return t, co, sup, logs
+
+t, co, sup, logs = mac_world()
+env_no_data = {k: v for k, v in os.environ.items() if k != "WAVEFLOW_DATA"}
+with mock.patch.object(S, "_MAC", True), mock.patch.object(S, "_MAC_SUPPORT", sup), \
+     mock.patch.object(S, "_MAC_LOGS", logs), mock.patch.object(S, "ROOT", co), \
+     mock.patch.dict(os.environ, env_no_data, clear=True):
+    for frozen in (False, True):
+        with mock.patch.object(S, "FROZEN", frozen):
+            check(f"mac frozen={frozen}: config in Application Support", S.app_dir(), sup)
+            check(f"mac frozen={frozen}: log in Library/Logs", S.log_dir(), logs)
+            check(f"mac frozen={frozen}: models in Application Support", S.models_dir(), sup / "data" / "models")
+    with mock.patch.object(S, "FROZEN", False):
+        check("source run migrates the finished setup", S.migrate_mac_settings(log=lambda *_: None), True)
+    check("config copied", json.loads((sup / "config.json").read_text())["hotkey_show"], "ctrl+alt+m")
+    check("the checkout's config is left in place (copied, not moved)", (co / "app" / "config.json").exists(), True)
+    check("models MOVED, not duplicated", ((sup / "data" / "models" / "hub" / "encoder.onnx").exists(),
+                                           (co / "data" / "models").exists()), (True, False))
+    check("vocabulary copied", (sup / "data" / "vocab.user.json").exists(), True)
+    (sup / "config.json").write_text('{"setup_done": true, "hotkey_show": "mine"}')
+    with mock.patch.object(S, "FROZEN", False):
+        check("never twice, never over an existing config", S.migrate_mac_settings(log=lambda *_: None), False)
+    check("existing config untouched", json.loads((sup / "config.json").read_text())["hotkey_show"], "mine")
+shutil.rmtree(t, ignore_errors=True)
+
+# the BUILT app finds the checkout through Info.plist
+t, co, sup, logs = mac_world()
+app_macos = t / "Applications" / "WaveFlow.app" / "Contents" / "MacOS"; app_macos.mkdir(parents=True)
+(app_macos.parent / "Info.plist").write_bytes(plistlib.dumps({"CFBundleIdentifier": "com.waveflow.client"}))
+with mock.patch.object(build, "ROOT", co):
+    build._mac_plist(app_macos.parent.parent)
+check("build records its checkout in Info.plist",
+      plistlib.loads((app_macos.parent / "Info.plist").read_bytes()).get("WaveFlowSourceCheckout"), str(co))
+with mock.patch.object(S, "_MAC", True), mock.patch.object(S, "_MAC_SUPPORT", sup), mock.patch.object(S, "_MAC_LOGS", logs), \
+     mock.patch.object(S, "FROZEN", True), mock.patch.object(S, "ROOT", app_macos), \
+     mock.patch.object(sys, "executable", str(app_macos / "WaveFlow")), mock.patch.dict(os.environ, env_no_data, clear=True):
+    check("the installed app migrates from that checkout", S.migrate_mac_settings(log=lambda *_: None), True)
+    check("...and opens set up, not in the wizard", json.loads((sup / "config.json").read_text()).get("setup_done"), True)
+shutil.rmtree(t, ignore_errors=True)
+
+t, co, sup, logs = mac_world()
+(co / "app" / "config.json").write_text('{"setup_done": false}')
+with mock.patch.object(S, "_MAC", True), mock.patch.object(S, "_MAC_SUPPORT", sup), mock.patch.object(S, "ROOT", co), \
+     mock.patch.object(S, "FROZEN", False), mock.patch.dict(os.environ, env_no_data, clear=True):
+    check("an unfinished setup is not migrated", S.migrate_mac_settings(log=lambda *_: None), False)
+with mock.patch.object(S, "_MAC", True), mock.patch.object(S, "_MAC_SUPPORT", sup), mock.patch.object(S, "ROOT", co), \
+     mock.patch.object(S, "FROZEN", False), mock.patch.dict(os.environ, {**env_no_data, "WAVEFLOW_DATA": str(t / "portable")}, clear=True):
+    check("WAVEFLOW_DATA keeps a checkout portable (config)", S.app_dir(), t / "portable")
+    check("WAVEFLOW_DATA: nothing migrated", S.migrate_mac_settings(log=lambda *_: None), False)
+shutil.rmtree(t, ignore_errors=True)
+
+with mock.patch.object(S, "_MAC", False), mock.patch.object(S, "FROZEN", False):
+    check("windows/source unchanged: config next to the app", S.app_dir(), S.ROOT / "app")
+
+_wf = (Path(__file__).resolve().parent / "waveflow.py").read_text(encoding="utf-8")
+_main = _wf[_wf.index("def main() -> int:"):]
+check("migration runs before the config is read (before WaveFlow(args))",
+      _main.index("migrate_mac_settings") < _main.index("ui = WaveFlow(args)"), True)
+check("migration never runs at import", _wf.index("migrate_mac_settings") > _wf.index("def main() -> int:"), True)
+_wz = (Path(__file__).resolve().parent / "wizard.py").read_text(encoding="utf-8")
+_rej = _wz[_wz.index("    def reject(self):"):]
+check("closing an unfinished first setup asks before quitting",
+      _rej.index('QMessageBox.question(self, "Quit WaveFlow?"') < _rej.index("super().reject()"), True)
+
 if FAILS: print("INSTALL_FAIL\n"+"\n".join(FAILS)); raise SystemExit(1)
 print("INSTALL_OK — bundles copy whole, reinstall replaces rather than merges")

@@ -108,7 +108,7 @@ def scan(config_path: Path | None = None) -> list[Item]:
     data = S.app_data()
     models = [hf_hub() / r for r in MODEL_REPOS if (hf_hub() / r).exists()]
     settings = [p for p in (config_path, data / "docker.env", data / "engine.log",
-                            S.app_dir() / "waveflow.log") if p.exists()]
+                            S.log_dir() / "waveflow.log") if p.exists()]
     vocab = [p for p in (S.ROOT / "server" / "vocab.user.json",) if p.exists()]
     shortcuts = S.shortcuts_ours()
     try:
@@ -323,7 +323,10 @@ def run(items: list[Item], chosen: set[str], engine=None, dry_run=False, log=pri
 def _inside_allowed(p: Path) -> bool:
     """Never delete anything outside the app folder, its app-data folder, or its two model repos."""
     p = p.resolve()
-    roots = [S.ROOT.resolve(), S.app_data().resolve()] + [(hf_hub() / r).resolve() for r in MODEL_REPOS]
+    # app_dir and log_dir too: on a Mac they are ~/Library/Application Support/WaveFlow and
+    # ~/Library/Logs/WaveFlow, outside ROOT — without them the settings row could never be removed.
+    roots = ([S.ROOT.resolve(), S.app_data().resolve(), S.app_dir().resolve(), S.log_dir().resolve()]
+             + [(hf_hub() / r).resolve() for r in MODEL_REPOS])
     return any(p == r or r in p.parents for r in roots)
 
 

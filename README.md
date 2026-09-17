@@ -80,27 +80,18 @@ venv/bin/pip install -r requirements.txt \
   pyobjc-framework-Cocoa \
   pyobjc-framework-Quartz \
   pyobjc-framework-ApplicationServices
-venv/bin/python app/waveflow.py
-```
-
-**Then install it properly**
-
-```bash
 venv/bin/python app/build.py --install
+open /Applications/WaveFlow.app
 ```
 
-Builds `WaveFlow.app` and puts it in **/Applications**, so you can reopen it from Launchpad or
-Spotlight. Pick your own folder with `--install ~/Apps`.
+This builds `WaveFlow.app`, puts it in **/Applications**, and opens it. Setup runs **in the app**.
+Reopen it later from Launchpad or Spotlight. Pick another folder with `--install ~/Apps`.
 
 The app carries its own engine, so *This Mac — background app* works from it. The model, settings
 and logs live in `~/Library/Application Support/WaveFlow` and `~/Library/Logs/WaveFlow`, so
 rebuilding or replacing the app keeps them.
 
-Gatekeeper blocks the first double-click on an unsigned app — right-click it, choose **Open**
-once, and it opens normally after that.
-
-> Running `app/waveflow.py` straight from Terminal is fine for a first look, but it lives in the
-> menu bar with no icon to reopen. Install it and you get one.
+If macOS blocks the first open, right-click the app in Finder and choose **Open** once.
 
 </td>
 </tr>
@@ -143,9 +134,11 @@ Paste this into Claude Code, Cursor, or any AI terminal assistant:
 Install WaveFlow from https://github.com/MrAbookah/WaveFlow on this machine.
 Read its README first and follow the section for my operating system.
 Create the virtual environment inside the cloned folder, never system-wide.
-On macOS also install the three pyobjc frameworks the README names, then tell me
-exactly which system permissions I must grant by hand - you cannot grant them for
-me. Do not change any of my existing settings and do not install anything globally.
+On macOS also install the three pyobjc frameworks the README names, then build and
+install the app with app/build.py --install and open /Applications/WaveFlow.app.
+Do not run app/waveflow.py directly on macOS. Tell me that the app's own Allow
+buttons ask for the permissions - you cannot grant them for me. Do not change any
+of my existing settings and do not install anything globally.
 When the setup wizard opens, stop and hand it back to me.
 ```
 
@@ -386,6 +379,11 @@ launch — so those permissions would have to be granted again every single time
 
 Add `--dist <folder>` to build somewhere other than `dist/`, so a test build cannot overwrite a
 release.
+
+**Developing on a Mac:** `venv/bin/python app/waveflow.py` runs WaveFlow straight from the
+checkout. It shares settings and the model with the installed app, in
+`~/Library/Application Support/WaveFlow`. macOS gives its permissions to Python or Terminal,
+not to WaveFlow. Set `WAVEFLOW_DATA=<folder>` to keep a checkout's settings separate.
 
 ## Tests
 

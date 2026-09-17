@@ -55,19 +55,81 @@ _FROZEN_MAC = FROZEN and sys.platform == "darwin"
 # So a frozen Mac app keeps its state where macOS expects it. Everything else is unchanged.
 _MAC_SUPPORT = Path.home() / "Library" / "Application Support" / "WaveFlow"
 _MAC_LOGS = Path.home() / "Library" / "Logs" / "WaveFlow"
+# ONE place per Mac user — for the built app AND a source run. It used to be the app only, so the
+# README's own steps (run from source, then build --install) made two WaveFlows: setup, permissions
+# and a 631 MB model all landed in the source copy, and the installed app opened the wizard on every
+# launch (clean reinstall on a Mac, 2026-09-16). WAVEFLOW_DATA still makes a checkout portable.
+_MAC = sys.platform == "darwin"
+
+
+def _mac_override() -> Path | None:
+    o = os.environ.get("WAVEFLOW_DATA")
+    return Path(o) if o else None
 
 
 def app_dir() -> Path:
     """Where config.json lives. Computed from the CURRENT ROOT (tests may point ROOT elsewhere)."""
-    if _FROZEN_MAC:
-        return _MAC_SUPPORT
+    if _MAC:
+        return _mac_override() or _MAC_SUPPORT
     return ROOT if FROZEN else ROOT / "app"
 
 
 def log_dir() -> Path:
-    """Where waveflow.log lives. ~/Library/Logs on a frozen Mac, which is also where Console.app
-    looks; next to config.json everywhere else."""
-    return _MAC_LOGS if _FROZEN_MAC else app_dir()
+    """Where waveflow.log lives. ~/Library/Logs on a Mac, which is also where Console.app looks;
+    next to config.json everywhere else."""
+    if _MAC:
+        return _mac_override() or _MAC_LOGS
+    return app_dir()
+
+
+def migrate_mac_settings(log=print) -> bool:
+    """Once: bring a source checkout's setup into the shared Mac folder.
+
+    For everyone who already followed the old README — setup finished in the checkout, then the
+    installed app started unconfigured. Runs only when the shared folder has NO config.json yet, so
+    it can never overwrite anything. Config and vocabulary are copied; the downloaded models (hundreds
+    of MB) are moved, not duplicated. A built app finds its checkout from the path build.py wrote into
+    its Info.plist.
+    """
+    if not _MAC or _mac_override():
+        return False
+    dest = _MAC_SUPPORT
+    if (dest / "config.json").exists():
+        return False
+    src_root = None
+    if FROZEN:
+        try:
+            import plistlib
+            info = plistlib.loads((Path(sys.executable).resolve().parent.parent / "Info.plist").read_bytes())
+            src_root = Path(info.get("WaveFlowSourceCheckout", "")) if info.get("WaveFlowSourceCheckout") else None
+        except Exception:
+            src_root = None
+    else:
+        src_root = ROOT
+    if not src_root or not (src_root / "app" / "config.json").is_file():
+        return False
+    try:
+        import json
+        cfg = json.loads((src_root / "app" / "config.json").read_text(encoding="utf-8"))
+        if not cfg.get("setup_done"):
+            return False
+        dest.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src_root / "app" / "config.json", dest / "config.json")
+        src_data, dst_data = src_root / "data", dest / "data"
+        dst_data.mkdir(parents=True, exist_ok=True)
+        if (src_data / "models").is_dir() and not (dst_data / "models").exists():
+            shutil.move(str(src_data / "models"), str(dst_data / "models"))
+        for name in ("docker.env",):
+            if (src_data / name).is_file() and not (dst_data / name).exists():
+                shutil.copy2(src_data / name, dst_data / name)
+        vocab = src_root / "server" / "vocab.user.json"
+        if vocab.is_file() and not (dst_data / "vocab.user.json").exists():
+            shutil.copy2(vocab, dst_data / "vocab.user.json")
+        log(f"migrated settings from {src_root} -> {dest}")
+        return True
+    except Exception as e:
+        log(f"settings migration from {src_root} failed: {e}")
+        return False
 
 
 APP_DIR = app_dir()                                   # config.json
@@ -353,7 +415,7 @@ def app_data() -> Path:
         return Path(override)
     # Frozen Mac: outside the bundle, for the reasons at the top of this file. An update must not
     # take the user's models with it.
-    return (_MAC_SUPPORT / "data") if _FROZEN_MAC else (ROOT / "data")
+    return (_MAC_SUPPORT / "data") if _MAC else (ROOT / "data")
 
 
 def models_dir() -> Path:

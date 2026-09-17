@@ -977,6 +977,14 @@ class SetupWizard(QDialog):
     def reject(self):
         if self._busy:
             return                      # a build/start is running; closing would orphan it silently
+        if not self.cfg.get("setup_done") and self.isVisible():
+            # Closing an unfinished FIRST setup quits WaveFlow — there is nothing to run yet. It used
+            # to do so silently, which read as "the app keeps opening the wizard and then vanishes"
+            # (Mac, 2026-09-16). Say it, and let the user stay.
+            if QMessageBox.question(self, "Quit WaveFlow?",
+                                    "Setup isn't finished, so WaveFlow will quit.\n\n"
+                                    "Quit now?") != QMessageBox.Yes:
+                return
         self._stop_mic()
         super().reject()
 

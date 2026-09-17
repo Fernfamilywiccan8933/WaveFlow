@@ -213,6 +213,9 @@ def _mac_plist(app: Path) -> None:
         print(f"could not read {path}: {e} — the app will NOT be able to record.")
         return
     data.update(MAC_PLIST)
+    # Where this app was built from, so its first launch can pick up a setup already finished in
+    # that checkout (setup_logic.migrate_mac_settings). Local builds only; nothing is published.
+    data["WaveFlowSourceCheckout"] = str(ROOT)
     try:
         path.write_bytes(plistlib.dumps(data))
     except OSError as e:
