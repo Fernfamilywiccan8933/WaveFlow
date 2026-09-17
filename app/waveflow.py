@@ -1611,22 +1611,18 @@ class WaveFlow(QWidget):
             self._show_pill()
         if getattr(self, "_engine_wait_t0", None) is not None and _tries >= 0:
             return                               # already waiting for the engine; one wait only
-        if not self._server_up() and self._local_engine_starting():
+        if self._local_engine_starting() and not self._server_up():
             # WaveFlow started this engine itself moments ago and it is still loading the model.
             # That is "starting", not "offline" — and the old advice ("Start it, or set the URL")
             # was wrong on both counts (Mac, 2026-09-16: hotkey 2.3 s after launch). Wait, then
-            # carry on with the same press.
+            # carry on with the same press. Local only: 127.0.0.1 answers in milliseconds.
             self._wait_for_local_engine()
             return
-        if not self._server_up():  # fail BEFORE opening the mic — one calm message
-            self._offline = True
-            log.warning("STT backend offline at %s", self.url)
-            if not self._err_shown:  # show the balloon ONCE, not every attempt
-                self.error_sig.emit(f"STT backend offline. Start it, or set the URL in ⚙ Settings.\n({self.url})")
-                self._err_shown = True
-            return
-        self._offline = False
-        self._err_shown = False
+        # NO network check here any more. It used to gate the mic: the first press after a pause
+        # waited for /health before opening it, and a first lookup of a LAN name took 2.7 s on
+        # Windows (measured 2026-09-17: 2724 ms, then 30 ms) — every word in that gap was lost
+        # ("utterance 1" was the first one logged). The mic opens NOW and buffers; the worker
+        # checks the server and ends the session with the same message if it is really down.
         # capture the caret NOW (target still has focus — widget is non-activating);
         # UIA gives it in native/browser/Electron, Win32 caret as a cheap fallback.
         # A REAL caret is a thin tall rect — a "caret" the height of the whole
@@ -1698,6 +1694,19 @@ class WaveFlow(QWidget):
         backend; cumulative STABLE hypotheses feed the tail-correcting typer.
         If the streaming endpoint is unreachable, fall back to segment-commit."""
         import json as _json
+        if not self._server_up():
+            # Checked HERE, off the UI thread and after the mic is already capturing, so a slow
+            # name lookup costs no words. Really down: one calm message, end this session.
+            self._offline = True
+            log.warning("STT backend offline at %s", self.url)
+            if not self._err_shown:  # show the balloon ONCE, not every attempt
+                self.error_sig.emit(f"STT backend offline. Start it, or set the URL in ⚙ Settings.\n({self.url})")
+                self._err_shown = True
+            self._commit_reason = "offline"
+            self.commit_sig.emit()
+            return
+        self._offline = False
+        self._err_shown = False
         try:
             import websocket
             lat = int(self.cfg.get("stream_latency", 16))   # [70,16] = 480ms, live+accurate

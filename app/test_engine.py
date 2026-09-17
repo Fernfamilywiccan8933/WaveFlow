@@ -186,7 +186,7 @@ class _Sig:
     def __init__(self):
         self.sent = []
 
-    def emit(self, m):
+    def emit(self, m=None):
         self.sent.append(m)
 
 
@@ -252,10 +252,25 @@ with mock.patch.object(W.QTimer, "singleShot", lambda ms, fn: timers.append(ms))
     check("engine never ready: says 'still not ready', not 'offline'",
           len(c.error_sig.sent) == 1 and "still not ready" in c.error_sig.sent[0], True)
 
+    # A remote server is NOT checked before the mic opens any more: a slow first name lookup
+    # (2.7 s, measured on Windows 2026-09-17) used to swallow the first words of every session.
     d = _App(mode="connect")
-    W.WaveFlow.start_listen(d)
-    check("a remote server that is down is still reported offline",
+    d.up_calls = 0
+    d._server_up = lambda d=d: (setattr(d, "up_calls", d.up_calls + 1) or d.up)
+    d._engine_wait_t0 = None
+    with mock.patch.object(W, "caret_rect_uia", side_effect=RuntimeError("reached the mic path")):
+        try:
+            W.WaveFlow.start_listen(d)
+        except RuntimeError:
+            pass
+    check("remote: the press goes straight to opening the mic, no network wait", d.up_calls, 0)
+    check("remote: no 'offline' before the mic even opens", d.error_sig.sent, [])
+    # ...and the worker, already capturing, reports a server that is really down.
+    d.commit_sig, d._err_shown = _Sig(), False
+    W.WaveFlow._stream_ws_worker(d)
+    check("remote down: reported offline by the worker",
           len(d.error_sig.sent) == 1 and "offline" in d.error_sig.sent[0], True)
+    check("remote down: the session is ended, not left listening", len(d.commit_sig.sent), 1)
 
 if FAILS:
     print("ENGINE_FAIL\n" + "\n".join(FAILS))
