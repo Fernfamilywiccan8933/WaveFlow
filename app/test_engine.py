@@ -176,6 +176,86 @@ if _exe:
     r = subprocess.run([_exe, "--providers"], capture_output=True, text=True, timeout=120)
     check("built app answers --providers", (r.returncode, "CPUExecutionProvider" in r.stdout), (0, True))
 
+# --- a hotkey while OUR engine is still loading waits; it is not "offline" (Mac, 2026-09-16) ------
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+import waveflow as W  # noqa: E402
+
+
+class _Sig:
+    def __init__(self):
+        self.sent = []
+
+    def emit(self, m):
+        self.sent.append(m)
+
+
+class _Eng:
+    def __init__(self):
+        self.alive, self.log_path = True, Path("engine.log")
+
+    def running(self):
+        return self.alive
+
+    def last_log_line(self):
+        return "loading"
+
+
+class _App:
+    ENGINE_WAIT_S = W.WaveFlow.ENGINE_WAIT_S
+
+    def __init__(self, mode="local"):
+        self.cfg = {"engine": {"mode": mode}}
+        self.engine, self.error_sig = _Eng(), _Sig()
+        self.state, self._worker, self._err_shown, self.url = "idle", None, False, "http://127.0.0.1:8756"
+        self.words, self.up, self.listened = [], False, []
+
+    def isVisible(self):
+        return True
+
+    def set_word(self, w):
+        self.words.append(w)
+
+    def _server_up(self):
+        return self.up
+
+
+for _n in ("_local_engine_starting", "_wait_for_local_engine"):
+    setattr(_App, _n, getattr(W.WaveFlow, _n))
+timers = []
+with mock.patch.object(W.QTimer, "singleShot", lambda ms, fn: timers.append(ms)):
+    a = _App()
+    a.start_listen = lambda _tries=0, a=a: (a.listened.append(_tries) if _tries == -1
+                                            else W.WaveFlow.start_listen(a, _tries))
+    W.WaveFlow.start_listen(a)
+    check("engine loading: no 'offline' error", a.error_sig.sent, [])
+    check("engine loading: the pill says it is starting", a.words[-1], "Starting engine…")
+    check("engine loading: polls every 250 ms", timers, [250])
+    W.WaveFlow.start_listen(a)
+    check("a second press while waiting starts no second wait", timers, [250])
+    a.up = True
+    a._wait_for_local_engine()
+    check("engine ready: the SAME press goes on to listen", a.listened, [-1])
+    check("engine ready: wait cleared", a._engine_wait_t0, None)
+
+    b = _App()
+    b._wait_for_local_engine()
+    b.engine.alive = False
+    b._wait_for_local_engine()
+    check("engine died while starting: says so, names the log",
+          len(b.error_sig.sent) == 1 and "stopped" in b.error_sig.sent[0] and "engine.log" in b.error_sig.sent[0], True)
+
+    c = _App()
+    c._wait_for_local_engine()
+    c._engine_wait_t0 -= W.WaveFlow.ENGINE_WAIT_S + 1
+    c._wait_for_local_engine()
+    check("engine never ready: says 'still not ready', not 'offline'",
+          len(c.error_sig.sent) == 1 and "still not ready" in c.error_sig.sent[0], True)
+
+    d = _App(mode="connect")
+    W.WaveFlow.start_listen(d)
+    check("a remote server that is down is still reported offline",
+          len(d.error_sig.sent) == 1 and "offline" in d.error_sig.sent[0], True)
+
 if FAILS:
     print("ENGINE_FAIL\n" + "\n".join(FAILS))
     raise SystemExit(1)

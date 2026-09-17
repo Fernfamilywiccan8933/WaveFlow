@@ -172,12 +172,42 @@ def _install(built: Path, where: str) -> None:
         return
 
     print(f"\nInstalled -> {target}")
+    if IS_MAC and built.is_dir():
+        _one_registered_copy(built, target)
     if IS_MAC:
         print("Open it from Launchpad or Spotlight (Cmd+Space, type WaveFlow).")
         print("FIRST TIME: right-click it in Finder and choose Open — Gatekeeper blocks a")
         print("double-click on an app that is not signed by a paid Apple account.")
         print("If Accessibility or Input Monitoring show WaveFlow as ON but it still can't type or")
         print("hear the hotkey: remove it from that list (− button) and add it again.")
+
+
+LSREGISTER = ("/System/Library/Frameworks/CoreServices.framework/Frameworks/"
+              "LaunchServices.framework/Support/lsregister")
+
+
+def _one_registered_copy(built: Path, installed: Path) -> None:
+    """Leave exactly ONE WaveFlow.app known to macOS: the installed one.
+
+    Every bundle carries com.waveflow.client, and Launch Services remembers each one it has seen.
+    Notification Center picks the icon by that id — on a Mac with the build copy in dist/ plus older
+    builds, banners showed PyInstaller's placeholder icon while the installed app had the right one
+    (2026-09-16: lsregister listed five copies). So the build copy is unregistered and deleted once
+    the installed copy exists, and the installed one is registered explicitly.
+    """
+    import shutil
+    if built.resolve() == installed.resolve() or not (installed / "Contents" / "Info.plist").is_file():
+        return
+    try:
+        subprocess.run([LSREGISTER, "-u", str(built)], capture_output=True, timeout=60)
+    except Exception:
+        pass
+    shutil.rmtree(built, ignore_errors=True)
+    try:
+        subprocess.run([LSREGISTER, "-f", str(installed)], capture_output=True, timeout=60)
+    except Exception:
+        pass
+    print(f"removed the build copy {built} so only the installed app carries the WaveFlow icon")
 
 
 MAC_PLIST = {

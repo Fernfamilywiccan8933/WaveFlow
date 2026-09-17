@@ -1545,6 +1545,40 @@ class WaveFlow(QWidget):
         except Exception:
             return False
 
+    ENGINE_WAIT_S = 120.0     # covers a model load; a first-run download shows progress in its log
+
+    def _local_engine_starting(self) -> bool:
+        eng = self.cfg.get("engine") or {}
+        return eng.get("mode") == "local" and self.engine.running()
+
+    def _wait_for_local_engine(self):
+        """Poll /health every 250 ms while our own engine process is alive, then start listening."""
+        now = time.monotonic()
+        if getattr(self, "_engine_wait_t0", None) is None:
+            self._engine_wait_t0 = now
+            log.info("hotkey while the local engine is still starting — waiting for it")
+            self.set_word("Starting engine…")
+        if self._server_up():
+            log.info("local engine ready after %.1fs — listening", now - self._engine_wait_t0)
+            self._engine_wait_t0 = None
+            self.start_listen(_tries=-1)             # -1: this IS the waiting press, let it through
+            return
+        if not self.engine.running():
+            self._engine_wait_t0 = None
+            self.set_word("")
+            log.warning("local engine exited while starting — see %s", self.engine.log_path)
+            self.error_sig.emit(f"The speech engine stopped while starting. See {self.engine.log_path.name}.")
+            return
+        if now - self._engine_wait_t0 > self.ENGINE_WAIT_S:
+            self._engine_wait_t0 = None
+            self.set_word("")
+            log.warning("local engine not ready after %.0fs: %s", self.ENGINE_WAIT_S,
+                         self.engine.last_log_line())
+            self.error_sig.emit(f"The speech engine is still not ready after {self.ENGINE_WAIT_S:.0f} s. "
+                                f"See {self.engine.log_path.name}.")
+            return
+        QTimer.singleShot(250, self._wait_for_local_engine)
+
     def start_listen(self, _tries: int = 0):
         # A press while the previous session is still closing used to either race it (and get
         # its mic stopped from under it) or be IGNORED ("worker still alive"), so the user
@@ -1565,6 +1599,15 @@ class WaveFlow(QWidget):
         if not self.isVisible():                 # the old close may have hidden it meanwhile
             self.show()
             self.raise_()
+        if getattr(self, "_engine_wait_t0", None) is not None and _tries >= 0:
+            return                               # already waiting for the engine; one wait only
+        if not self._server_up() and self._local_engine_starting():
+            # WaveFlow started this engine itself moments ago and it is still loading the model.
+            # That is "starting", not "offline" — and the old advice ("Start it, or set the URL")
+            # was wrong on both counts (Mac, 2026-09-16: hotkey 2.3 s after launch). Wait, then
+            # carry on with the same press.
+            self._wait_for_local_engine()
+            return
         if not self._server_up():  # fail BEFORE opening the mic — one calm message
             self._offline = True
             log.warning("STT backend offline at %s", self.url)

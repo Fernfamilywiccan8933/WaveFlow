@@ -11,6 +11,11 @@ FAILS=[]
 def check(n,g,w):
     if g!=w: FAILS.append(f"  {n}\n    got  {g!r}\n    want {w!r}")
 
+# The copy tests below reuse one fake bundle; on a real Mac _install would delete it after the first
+# install (only one registered copy). That rule gets its own test further down.
+_real_one_copy = build._one_registered_copy
+build._one_registered_copy = lambda built, installed: None
+
 tmp=Path(tempfile.mkdtemp())
 # a .app is a DIRECTORY with nested files — the shape that breaks naive copies
 src=tmp/"WaveFlow.app"; (src/"Contents"/"MacOS").mkdir(parents=True)
@@ -107,6 +112,26 @@ with mock.patch.object(build.subprocess, "run", fake_run), mock.patch("shutil.wh
     shutil.rmtree(app.parent, ignore_errors=True)
 check("config names the codeSigning extended key usage", "extendedKeyUsage = critical,codeSigning" in build._CERT_CONFIG, True)
 print(f"  (openssl steps ran for real: {HAVE_OPENSSL})")
+
+# --- only ONE WaveFlow.app stays registered, so notifications get the right icon (Mac, 2026-09-16) ---
+build._one_registered_copy = _real_one_copy
+t = Path(tempfile.mkdtemp())
+b = t / "dist" / "WaveFlow.app"; (b / "Contents").mkdir(parents=True); (b / "Contents" / "Info.plist").write_text("<plist/>")
+ls = []
+with mock.patch.object(build, "IS_MAC", True), \
+     mock.patch.object(build.subprocess, "run", lambda cmd, **kw: ls.append(cmd) or subprocess.CompletedProcess(cmd, 0)):
+    build._install(b, str(t / "Applications"))
+inst = t / "Applications" / "WaveFlow.app"
+check("installed copy exists", (inst / "Contents" / "Info.plist").exists(), True)
+check("build copy removed after install", b.exists(), False)
+check("build copy unregistered, installed one registered",
+      [c[1:] for c in ls if c[0] == build.LSREGISTER], [["-u", str(b)], ["-f", str(inst)]])
+ls.clear()
+b2 = t / "x" / "WaveFlow.app"; b2.mkdir(parents=True)
+with mock.patch.object(build.subprocess, "run", lambda cmd, **kw: ls.append(cmd)):
+    build._one_registered_copy(b2, t / "missing" / "WaveFlow.app")
+check("never deletes the build if the install is not really there", (b2.exists(), ls), (True, []))
+shutil.rmtree(t, ignore_errors=True)
 
 # --- ONE settings folder per Mac user, and the old two-copy setup migrated (Mac, 2026-09-16) -----
 import json, plistlib

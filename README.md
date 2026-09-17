@@ -93,6 +93,9 @@ rebuilding or replacing the app keeps them.
 
 If macOS blocks the first open, right-click the app in Finder and choose **Open** once.
 
+Notifications show the wrong icon? An old WaveFlow.app in the Trash can still claim it. Empty the
+Trash.
+
 </td>
 </tr>
 </table>
