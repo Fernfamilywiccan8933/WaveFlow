@@ -41,7 +41,7 @@ The speech engine is inside the app (109 MB). No Python, no Docker. The first st
 
 ```powershell
 $r = "MrAbookah/WaveFlow"
-$u = "[https://github.com/$r/releases/latest/download/WaveFlow.exe](https://github.com/$r/releases/latest/download/WaveFlow.exe)"
+$u = "https://github.com/$r/releases/latest/download/WaveFlow.exe"
 iwr $u -OutFile WaveFlow.exe
 .\WaveFlow.exe
 ```
@@ -49,7 +49,7 @@ iwr $u -OutFile WaveFlow.exe
 **Or run from source**
 
 ```powershell
-git clone [https://github.com/MrAbookah/WaveFlow.git](https://github.com/MrAbookah/WaveFlow.git)
+git clone https://github.com/MrAbookah/WaveFlow.git
 cd WaveFlow
 py -3.12 -m venv venv
 venv\Scripts\pip install -r requirements.txt
@@ -73,7 +73,7 @@ No prebuilt `.app` yet. A Mac bundle must be built on a Mac. The command below b
 **Install from Terminal**
 
 ```bash
-git clone [https://github.com/MrAbookah/WaveFlow.git](https://github.com/MrAbookah/WaveFlow.git)
+git clone https://github.com/MrAbookah/WaveFlow.git
 cd WaveFlow
 python3 -m venv venv
 venv/bin/pip install -r requirements.txt \
@@ -116,7 +116,7 @@ The wizard's final page and **Settings → Hotkey & look** display live permissi
 Paste this block directly into Claude Code, Cursor, or your AI terminal tool:
 
 ```text
-Install WaveFlow from [https://github.com/MrAbookah/WaveFlow](https://github.com/MrAbookah/WaveFlow) on this machine.
+Install WaveFlow from https://github.com/MrAbookah/WaveFlow on this machine.
 Read its README first and follow the section for my operating system.
 Create the virtual environment inside the cloned folder, never system-wide.
 On macOS also install the three pyobjc frameworks the README names, then build and
@@ -191,7 +191,7 @@ Set `--threads` equal to physical **performance cores**. On hybrid CPU architect
 ## A. This PC — background app (ONNX)
 
 ```powershell
-git clone [https://github.com/MrAbookah/WaveFlow.git](https://github.com/MrAbookah/WaveFlow.git)
+git clone https://github.com/MrAbookah/WaveFlow.git
 cd WaveFlow
 py -3.12 -m venv venv
 venv\Scripts\pip install -r requirements.txt
