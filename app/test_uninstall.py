@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import testenv  # noqa: E402,F401 — isolate settings/log BEFORE any app import
 import setup_logic as S  # noqa: E402
 import uninstall as U  # noqa: E402
 
@@ -135,8 +136,11 @@ with tempfile.TemporaryDirectory() as t:
     exe_dir.mkdir(parents=True)
     meipass.mkdir(parents=True)
     (exe_dir / "WaveFlow.exe").write_bytes(b"MZ")
+    # Without testenv's WAVEFLOW_DATA for this one check: it asserts the DEFAULT location. Only paths
+    # are computed; nothing is written.
     with mock.patch.object(sys, "frozen", True, create=True), \
-         mock.patch.object(sys, "executable", str(exe_dir / "WaveFlow.exe")):
+         mock.patch.object(sys, "executable", str(exe_dir / "WaveFlow.exe")), \
+         mock.patch.dict(os.environ, {k: v for k, v in os.environ.items() if k != "WAVEFLOW_DATA"}, clear=True):
         F = importlib.reload(S)
         # A frozen MAC keeps its data OUTSIDE the bundle on purpose, so an update cannot delete it.
         want_app = (Path.home() / "Library" / "Application Support" / "WaveFlow"

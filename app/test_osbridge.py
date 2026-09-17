@@ -19,6 +19,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import testenv  # noqa: E402,F401 — isolate settings/log BEFORE any app import
 
 import osbridge  # noqa: E402
 from osbridge import mac, posix, win  # noqa: E402
@@ -211,6 +212,95 @@ try:
         check("the error says which state", e.status, "denied")
 finally:
     audio.mic_permission, audio.sd = _real_status, _real_sd
+
+# --- a CoreAudio stop that NEVER returns must not freeze WaveFlow (Mac, 2026-09-16) --------------
+import threading  # noqa: E402
+
+_forever = threading.Event()                     # never set: the "deadlocked IO thread"
+
+
+class _HangingStream:
+    def __init__(self, hang_on):
+        self.hang_on, self.calls = hang_on, []
+
+    def start(self):
+        self.calls.append("start")
+        if "start" in self.hang_on:
+            _forever.wait()
+
+    def stop(self):
+        self.calls.append("stop")
+        _forever.wait()                          # the real bug: a drain that waits forever
+
+    def abort(self):
+        self.calls.append("abort")
+        if "abort" in self.hang_on:
+            _forever.wait()
+
+    def close(self):
+        self.calls.append("close")
+
+
+m = audio.MicStream.__new__(audio.MicStream)
+m._stream = _HangingStream(hang_on={"abort"})
+_t0 = time.time()
+ok = m.stop(timeout=0.5)
+check("a stop that hangs is abandoned, not waited on forever", (ok, time.time() - _t0 < 1.5), (False, True))
+check("after an abandoned stop the stream is released", m._stream, None)
+m._stream = s2 = _HangingStream(hang_on=set())
+check("a normal stop succeeds", m.stop(timeout=2), True)
+time.sleep(0.05)
+check("abort() is used, never the draining stop()", ("abort" in s2.calls, "stop" in s2.calls), (True, False))
+
+_real_status, _real_sd, _real_open = audio.mic_permission, audio.sd, audio.OPEN_TIMEOUT_S
+try:
+    audio.mic_permission = lambda: "granted"
+    audio.OPEN_TIMEOUT_S = 0.5
+    audio.sd = type("sd", (), {"InputStream": lambda **kw: _HangingStream(hang_on={"start"})})
+    m = audio.MicStream.__new__(audio.MicStream)
+    m.device, m.sr, m.ch, m.chunks, m._stream, m._cb = None, 16000, 1, [], None, (lambda *a: None)
+    _t0 = time.time()
+    try:
+        m.start()
+        _err = None
+    except audio.MicStuckError:
+        _err = "stuck"
+    check("an open that hangs raises MicStuckError in time", (_err, time.time() - _t0 < 1.5), ("stuck", True))
+finally:
+    audio.mic_permission, audio.sd, audio.OPEN_TIMEOUT_S = _real_status, _real_sd, _real_open
+
+
+class _FinalApp:
+    def __init__(self, mic):
+        self.emitted, self.final_sig = [], types_ns(emit=lambda sid: self.emitted.append(sid))
+        self._mic = mic
+
+    def _close_recorder(self, rec):
+        pass
+
+    def _commit_segment(self, reason):
+        pass
+
+
+def types_ns(**kw):
+    import types as _t
+    return _t.SimpleNamespace(**kw)
+
+
+class _BoomMic:
+    def stop(self):
+        raise RuntimeError("device vanished")
+
+
+import waveflow as _W  # noqa: E402
+
+fa = _FinalApp(None)
+try:
+    _W.WaveFlow._finalize_job(fa, {"pending": [], "lock": threading.Lock(), "live": False, "rec": None,
+                                   "mic": _BoomMic(), "sid": 7})
+except RuntimeError:
+    pass
+check("the session ALWAYS reaches idle, even if releasing the mic fails", fa.emitted, ["7"])
 
 # --- the app refuses to type into the void (Mac, 2026-09-16) ------------------------------------
 # Without Accessibility, macOS DROPS synthetic keystrokes and the typing call still "works". Every

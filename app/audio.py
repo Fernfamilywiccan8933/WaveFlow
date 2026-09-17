@@ -6,10 +6,42 @@ device and can hand back silence. This captures at the device's NATIVE rate,
 mono-mixes, and resamples to 16k with numpy (no scipy needed).
 """
 import io
+import logging
+import threading
 import wave
 
 import numpy as np
 import sounddevice as sd
+
+log = logging.getLogger("waveflow")
+
+# CoreAudio can deadlock inside a stream stop: the stop waits for the IO thread, and the IO thread
+# is stuck in its own work loop. Sampled on a Mac 2026-09-16 — AudioOutputUnitStop never returned,
+# the session stayed "finalizing" forever, and every later hotkey press was dropped until a
+# force-quit. So no stream call runs on the caller's thread without a time limit.
+STOP_TIMEOUT_S = 2.0
+OPEN_TIMEOUT_S = 5.0
+
+
+class MicStuckError(RuntimeError):
+    """The audio system did not answer in time. The app keeps running; this session has no mic."""
+
+
+def _bounded(fn, timeout: float) -> tuple[bool, object]:
+    """Run fn on a daemon thread. (finished, result-or-exception). A thread that never returns is
+    abandoned — it holds only a dead stream — instead of freezing whoever called."""
+    box, done = {}, threading.Event()
+
+    def run():
+        try:
+            box["r"] = fn()
+        except BaseException as e:           # noqa: BLE001 — handed back to the caller
+            box["r"] = e
+        finally:
+            done.set()
+
+    threading.Thread(target=run, daemon=True, name="mic-bounded").start()
+    return done.wait(timeout), box.get("r")
 
 
 class MicPermissionError(RuntimeError):
@@ -174,19 +206,41 @@ class MicStream:
         if status in ("denied", "undetermined"):
             raise MicPermissionError(status)
         self.chunks = []
-        self._stream = sd.InputStream(samplerate=self.sr, channels=self.ch,
-                                      dtype="float32", device=self.device,
-                                      callback=self._cb)
-        self._stream.start()
 
-    def stop(self):
-        if self._stream:
+        def _open():
+            s = sd.InputStream(samplerate=self.sr, channels=self.ch, dtype="float32",
+                               device=self.device, callback=self._cb)
+            s.start()
+            return s
+
+        finished, r = _bounded(_open, OPEN_TIMEOUT_S)
+        if not finished:
+            log.error("mic did not open in %.1fs — audio system stuck", OPEN_TIMEOUT_S)
+            raise MicStuckError("the audio device did not respond")
+        if isinstance(r, BaseException):
+            raise r
+        self._stream = r
+
+    def stop(self, timeout: float = STOP_TIMEOUT_S) -> bool:
+        """Release the input. abort(), not stop(): the samples are already taken, so there is
+        nothing to drain, and a drain is what waits on the IO thread. Bounded either way.
+        Returns False when the stream had to be abandoned."""
+        s, self._stream = self._stream, None
+        if not s:
+            return True
+
+        def _close():
             try:
-                self._stream.stop()
-                self._stream.close()
-            except Exception:
-                pass
-            self._stream = None
+                s.abort()
+            finally:
+                s.close()
+
+        finished, r = _bounded(_close, timeout)
+        if not finished:
+            log.error("mic stream did not stop in %.1fs — abandoned (CoreAudio hang); carrying on",
+                      timeout)
+            return False
+        return True
 
     def rms(self) -> float:
         return self._last_rms

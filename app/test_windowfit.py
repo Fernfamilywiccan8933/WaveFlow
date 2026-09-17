@@ -8,6 +8,7 @@ os.environ["QT_QPA_PLATFORM"]="offscreen"
 # path resolved only by luck of the working directory, and on a Mac it does not exist at all
 # (found 2026-09-16).
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import testenv  # noqa: E402,F401 — isolate settings/log BEFORE any app import
 from PySide6.QtWidgets import QApplication, QSizeGrip
 import wizard as W, settings as S2
 FAILS=[]

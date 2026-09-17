@@ -5,6 +5,7 @@ from pathlib import Path
 # Its own parent, not a hardcoded absolute path — that resolved only by luck of the working
 # directory, and on a Mac it does not exist at all (found 2026-09-16).
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import testenv  # noqa: E402,F401 — isolate settings/log BEFORE any app import
 import build
 
 FAILS=[]

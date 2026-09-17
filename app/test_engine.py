@@ -20,6 +20,7 @@ from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import testenv  # noqa: E402,F401 — isolate settings/log BEFORE any app import
 
 import local_engine as L  # noqa: E402
 import setup_logic as S  # noqa: E402

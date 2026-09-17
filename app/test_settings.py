@@ -12,6 +12,7 @@ from pathlib import Path
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QT_QPA_FONTDIR", "C:/Windows/Fonts")
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import testenv  # noqa: E402,F401 — isolate settings/log BEFORE any app import
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "server"))
 import setup_logic as S  # noqa: E402
 
@@ -31,6 +32,7 @@ check("env key added when missing", S.replace_env_value("A=1\n", "WAVEFLOW_TOKEN
 
 # --- rotation per install type ------------------------------------------------------------
 check("local: no token to rotate", S.rotation_plan({"engine": {"mode": "local"}}, "N").kind, "none")
+_isolated_data = os.environ["WAVEFLOW_DATA"]         # set by testenv; put back, never deleted
 with tempfile.TemporaryDirectory() as d:
     os.environ["WAVEFLOW_DATA"] = d
     Path(d, "docker.env").write_text("WAVEFLOW_TOKEN=old\nHOST_BIND=0.0.0.0\nTHREADS=6\n")
@@ -41,7 +43,7 @@ with tempfile.TemporaryDirectory() as d:
     check("docker: new token written", "WAVEFLOW_TOKEN=" + "N" * 20 in r.env_text, True)
     check("docker: restarts the same service without rebuilding",
           ("waveflow-onnx-gpu" in r.commands[0], "--build" in r.commands[0]), (True, False))
-    del os.environ["WAVEFLOW_DATA"]
+    os.environ["WAVEFLOW_DATA"] = _isolated_data
 r = S.rotation_plan({"url": "http://gpu-box:8757", "token": "old",
                      "engine": {"mode": "onsite", "engine": "nemo", "method": "docker"}}, "NEW")
 check("onsite docker: you do it", r.kind, "server")

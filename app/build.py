@@ -73,6 +73,9 @@ def main() -> int:
           for a in ("--hidden-import", m)],
         "--collect-all", "onnx_asr",       # ships its own model configs and tokenizer data
         "--collect-all", "onnxruntime",    # native providers are not found by the import scan
+        # huggingface_hub imports hf_xet (the faster Xet download backend) lazily, so the scan
+        # missed it and the built engine fell back to plain HTTP with a warning (Mac, 2026-09-16).
+        "--collect-all", "hf_xet",
         "--collect-submodules", "uvicorn", # picks its loop/protocol implementations by name
         "--collect-submodules", "fastapi",
         # No vocab file is bundled: the engine ships no built-in terms, and a user's own

@@ -31,7 +31,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import osbridge  # noqa: E402
-from audio import (MicPermissionError, MicStream, ReplayMic,  # noqa: E402
+from audio import (MicPermissionError, MicStream, MicStuckError, ReplayMic,  # noqa: E402
                    clean_input_devices, float_to_wav16k)
 from icons import app_icon, tray_icon  # noqa: E402
 # Only the PORTABLE half of stt is imported by name. Typing, backspacing, focusing and reading a
@@ -1073,7 +1073,10 @@ class WaveFlow(QWidget):
         def shortcuts():                     # Start menu + desktop: setup is what installs the app
             import setup_logic
             errs = setup_logic.create_shortcuts()
-            log.info("shortcuts: %s", "created" if not errs else "; ".join(errs))
+            if not IS_WINDOWS:
+                log.info("shortcuts: not used on this OS (the app itself is the icon)")
+            else:
+                log.info("shortcuts: %s", "created" if not errs else "; ".join(errs))
         threading.Thread(target=shortcuts, daemon=True).start()
         self.tray.showMessage("WaveFlow", "Setup saved — press the hotkey and speak.",
                               QSystemTrayIcon.Information, 2500)
@@ -1669,7 +1672,13 @@ class WaveFlow(QWidget):
             return
         except Exception as e:
             log.error("mic open FAILED device=%s: %s", self.device, e)
-            self.error_sig.emit(f"Mic failed ({e.__class__.__name__}) — right-click ⚙ to pick another device")
+            if isinstance(e, MicStuckError):
+                # The audio system itself is wedged (a previous stream never let go). Say it
+                # plainly; the app stays usable and the next press tries again.
+                self.error_sig.emit("The audio device is not responding. Press the hotkey again; "
+                                    "if it keeps happening, quit and reopen WaveFlow.")
+            else:
+                self.error_sig.emit(f"Mic failed ({e.__class__.__name__}) — right-click ⚙ to pick another device")
             self.state = "idle"
             self.wave.active = False
             return
@@ -2410,10 +2419,14 @@ class WaveFlow(QWidget):
         # Close the WAV only now: the send loop needs a tick or two to notice
         # _stream_stop, and its last writes are the end of the sentence. Only THIS session's
         # writer and mic — never whatever self._rec / self.mic point at by now.
-        self._close_recorder(snap["rec"])
-        if snap["mic"]:
-            snap["mic"].stop()
-        self.final_sig.emit(str(snap["sid"]))
+        try:
+            self._close_recorder(snap["rec"])
+            if snap["mic"]:
+                snap["mic"].stop()      # bounded: a CoreAudio hang is abandoned after 2 s
+        finally:
+            # ALWAYS reach idle. Anything above that hangs or raises used to leave the session
+            # "finalizing" forever, and start_listen then dropped every later press (Mac, 2026-09-16).
+            self.final_sig.emit(str(snap["sid"]))
 
     def _on_final(self, sid: str):
         # A close that finishes after a newer session has started must not mark the app idle
@@ -2604,6 +2617,9 @@ def serve_main(argv: list[str]) -> int:
             sys.path.insert(0, str(cand))
             break
     sys.argv = ["parakeet_server", *argv]
+    # The public model needs no token, so huggingface_hub's "HF_TOKEN not set" and Xet notices were
+    # WARNING noise in the user's engine log (Mac, 2026-09-16). Real errors still show.
+    os.environ.setdefault("HF_HUB_VERBOSITY", "error")
     # vocab.py looks for vocab.user.json NEXT TO ITSELF. In a frozen build "itself" is inside
     # PyInstaller's unpack folder, which is a fresh temp directory on every launch — so a user's
     # vocabulary could never be found, and anything written there would vanish. Point it at the
