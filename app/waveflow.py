@@ -373,17 +373,12 @@ class LiveTyper(threading.Thread):
     """Types toward a goal string in the target window: a few chars per tick,
     paced backspace corrections. Smooth and quiet instead of aggressive bursts."""
 
-    def __init__(self, target_ok, can_erase=None, on_write=None):
+    def __init__(self, target_ok):
         super().__init__(daemon=True)
         self._target_ok = target_ok        # callable: safe to type right now?
-        self._on_write = on_write or (lambda: None)   # called after every keystroke we send
-        # callable: safe to BACKSPACE right now? False when the user has moved the cursor or
-        # typed by hand since our last keystroke — then a correction would eat their text.
-        self._can_erase = can_erase or (lambda: True)
         self._lock = threading.Lock()
         self.goal = ""
         self.typed = ""
-        self._paused = False
         self._stop = threading.Event()
         self.start()
 
@@ -395,7 +390,6 @@ class LiveTyper(threading.Thread):
         with self._lock:
             self.goal = ""
             self.typed = ""
-        self._paused = False
 
     def has_output(self) -> bool:
         with self._lock:
@@ -406,7 +400,7 @@ class LiveTyper(threading.Thread):
             time.sleep(0.016)
             with self._lock:
                 goal, typed = self.goal, self.typed
-            if goal == typed or self._paused or not self._target_ok():
+            if goal == typed or not self._target_ok():
                 continue
             common = 0
             for a, b in zip(typed, goal):
@@ -415,24 +409,14 @@ class LiveTyper(threading.Thread):
                 else:
                     break
             if len(typed) > common:
-                if not self._can_erase():
-                    # The cursor is not where we left it: the user is editing. Correcting now would
-                    # delete THEIR text. Stop this utterance here — the finalised text still lands
-                    # through the normal commit — and start clean on the next one (reset()).
-                    if not self._paused:
-                        self._paused = True
-                        log.info("live correction paused: the cursor moved — refusing to backspace")
-                    continue
                 n = min(5, len(typed) - common)
                 send_backspaces(n)
-                self._on_write()
                 with self._lock:
                     self.typed = self.typed[:-n]
             else:
                 chunk = goal[len(typed):len(typed) + 3]
                 if chunk:
                     send_text(chunk)
-                    self._on_write()
                     with self._lock:
                         self.typed += chunk
 
@@ -985,7 +969,7 @@ class WaveFlow(QWidget):
         self._typed = ""
         self._prev_raw = ""
         self._commit_reason = "hotkey"
-        self.typer = LiveTyper(self._typing_ok, self._can_erase, self._note_write)
+        self.typer = LiveTyper(self._typing_ok)
         self._stream_stop = threading.Event()
         # Recorder state lives for the app's whole life, not a session's: the
         # session-start path calls _close_recorder() before anything opens one.
@@ -1969,39 +1953,6 @@ class WaveFlow(QWidget):
                                 "Security → Accessibility. Your words will be on the clipboard.")
         return self._can_type_last
 
-    # How long a correction may still be trusted after OUR last keystroke. Past this, the user has
-    # had time to click or type, so WaveFlow adds words instead of correcting them (backstop for
-    # apps that report no cursor position at all).
-    CORRECT_WINDOW_S = 1.5
-
-    def _caret_now(self):
-        """Where the text cursor is, cheaply. None when the app will not say."""
-        try:
-            return caret_rect_uia() or caret_screen_pos()
-        except Exception:
-            return None
-
-    def _note_write(self):
-        """Remember where our own typing left the cursor, and when."""
-        self._last_write_t = time.monotonic()
-        self._last_write_caret = self._caret_now()
-
-    def _can_erase(self) -> bool:
-        """May WaveFlow send backspaces right now?
-
-        Only its OWN last characters may ever be removed. It knows what it typed, not what you
-        typed — so if you click elsewhere in the line or type by hand, a correction lands on your
-        text instead (operator, 2026-09-17: "it will overwrite the previous word"). Two rails:
-          * the cursor must still be where our last keystroke left it;
-          * and that keystroke must be recent (CORRECT_WINDOW_S), which covers every app that
-            reports no cursor at all.
-        """
-        if time.monotonic() - getattr(self, "_last_write_t", 0.0) > self.CORRECT_WINDOW_S:
-            return False
-        was = getattr(self, "_last_write_caret", None)
-        now = self._caret_now()
-        return not (was is not None and now is not None and now != was)
-
     def _typing_ok(self) -> bool:
         """Safe to emit keystrokes right now? Never in test modes, never into a
         window other than the dictation target."""
@@ -2203,7 +2154,6 @@ class WaveFlow(QWidget):
             seg = want[self._live_append_from:]
             if len(seg) > self._live_new_sent:
                 send_text(seg[self._live_new_sent:])
-                self._note_write()
                 self._live_new_sent = len(seg)
                 self._live_typed = want
             if final:
@@ -2217,38 +2167,14 @@ class WaveFlow(QWidget):
         while n < len(cur) and n < len(want) and cur[n] == want[n]:
             n += 1
         back = len(cur) - n
-        if back > 0 and not self._can_erase():
-            # The user clicked elsewhere in the line, or typed by hand, since our last keystroke.
-            # Those backspaces would delete THEIR text (operator, 2026-09-17). Add words from the
-            # last word boundary instead, for the rest of this utterance — the same rule already
-            # used when the window changes.
-            log.info("cursor moved mid-utterance — append-only, no backspaces")
-            self._live_append_only = True
-            self._live_append_from = cur.rfind(" ") + 1
-            self._live_new_sent = max(0, len(cur) - self._live_append_from)
-            seg = want[self._live_append_from:]
-            if len(seg) > self._live_new_sent:
-                send_text(seg[self._live_new_sent:])
-                self._note_write()
-                self._live_new_sent = len(seg)
-            self._live_typed = want
-            if final:
-                if goal:
-                    self._typed_any = True
-                self._live_typed = ""
-                log.info("utterance %s finalised (append-only after a cursor move), %d chars: %r",
-                         m.get("utt"), len(goal), goal)
-            return
         if back > 0:
             if back > 240:      # sanity rail: a redraw this size means we lost sync
                 log.error("live redraw of %d chars refused — dropping to append-only", back)
                 self._live_typed = want
                 return
             send_backspaces(back)
-            self._note_write()
         if want[n:]:
             send_text(want[n:])
-            self._note_write()
         self._live_typed = want
 
         if final:
@@ -2283,11 +2209,9 @@ class WaveFlow(QWidget):
         with lock:
             while pending:
                 delta = pending.pop(0)
-                if isinstance(delta, HeldFinal) and target == delta.hwnd and self._can_erase():
-                    # Same box that already shows the start, and the cursor is still where we left
-                    # it: fix its unsettled tail and finish the sentence, rather than typing the
-                    # whole thing again. If the cursor HAS moved, the else branch appends instead —
-                    # a held burst is exactly when the user has been doing something else.
+                if isinstance(delta, HeldFinal) and target == delta.hwnd:
+                    # Same box that already shows the start: fix its unsettled tail and
+                    # finish the sentence, rather than typing the whole thing again.
                     n = 0
                     while (n < len(delta.typed) and n < len(delta.want)
                            and delta.typed[n] == delta.want[n]):
@@ -2297,7 +2221,6 @@ class WaveFlow(QWidget):
                     send_text(delta.want[n:])
                 else:
                     send_text((" " if self._typed_any else "") + delta)
-                self._note_write()
                 self._typed_any = True
                 log.info("append-burst %d chars: %r", len(delta), delta)
         return True
@@ -2448,7 +2371,6 @@ class WaveFlow(QWidget):
                 log.error("segment(%s): cannot type and clipboard failed (%s): %r", reason, e, text)
             return
         send_text((" " if self._typed_any else "") + text)
-        self._note_write()
         self._typed_any = True
         # A dead hotkey outranks a latency figure: the latency is trivia, the hotkey is whether
         # the app works at all. Do not let a successful transcription overwrite that warning.
